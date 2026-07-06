@@ -292,6 +292,7 @@ function submitManual(){
   const code=manualInput.value.trim();
   if(!code){ setStatus('バーコード番号を入力してください','err'); manualInput.focus(); return; }
   addScan(code,'手入力');
+  setStatus('登録しました：'+code,'ready');
   manualInput.value=''; manualInput.focus();
 }
 manualAddBtn.addEventListener('click',submitManual);
