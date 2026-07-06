@@ -91,6 +91,23 @@
   .go.secondary:active{background:#000;}
   .go svg{width:15px; height:15px;}
 
+  .manuallabel{display:flex; align-items:center; gap:8px; margin:16px 0 9px; font-size:12px; font-weight:800; color:var(--muted); letter-spacing:.02em;}
+  .manuallabel::before,.manuallabel::after{content:""; height:1px; background:var(--line); flex:1;}
+  .manualrow{display:flex; gap:8px;}
+  #manualInput{flex:1; min-width:0; border:1px solid var(--line); border-radius:12px; background:#fff;
+    font-family:var(--mono); font-size:16px; letter-spacing:.04em; color:var(--ink); padding:13px 12px;}
+  #manualInput:focus{outline:none; border-color:var(--orange); box-shadow:0 0 0 3px var(--orange-t);}
+  #manualInput::placeholder{font-family:var(--sans); color:var(--muted); letter-spacing:0;}
+  .manualadd{flex:none; border:none; border-radius:12px; cursor:pointer; background:var(--orange); color:#fff;
+    font-family:var(--sans); font-weight:800; font-size:15px; padding:0 20px;}
+  .manualadd:active{background:var(--orange-d);}
+
+  .copy{flex:none; width:30px; height:30px; border:1px solid var(--line); background:#fff; border-radius:8px;
+    color:var(--muted); cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0;}
+  .copy:active{background:var(--line2); color:var(--orange-d);}
+  .copy.done{background:var(--green); border-color:var(--green); color:#fff;}
+  .copy svg{width:15px; height:15px;}
+
   input[type=file]{display:none;}
   footer{margin-top:18px; text-align:center; font-size:11px; color:#A2A8B0; line-height:1.6;}
 </style>
@@ -117,6 +134,12 @@
     </button>
     <input type="file" id="capInput" accept="image/*" capture="environment">
     <input type="file" id="albumInput" accept="image/*">
+
+    <div class="manuallabel">直接入力して登録</div>
+    <div class="manualrow">
+      <input type="text" id="manualInput" inputmode="latin" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="バーコード番号を入力…">
+      <button class="manualadd" id="manualAddBtn">登録</button>
+    </div>
   </section>
 
   <div class="histhead">
@@ -183,6 +206,8 @@ function openExternal(url){ const w=window.open(url,'_blank'); if(!w){ location.
 
 function svgArrow(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'; }
 function svgX(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>'; }
+function svgCopy(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'; }
+function svgCheck(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>'; }
 
 function render(){
   histCount.textContent='('+history.length+'件)';
@@ -199,7 +224,14 @@ function render(){
     const del=document.createElement('button'); del.className='del'; del.innerHTML=svgX();
     del.setAttribute('aria-label','削除');
     del.onclick=()=>{ history=history.filter(x=>x!==item); saveHistory(); render(); };
-    top.appendChild(num); if(item.fmt) top.appendChild(fmt); top.appendChild(del);
+    const cp=document.createElement('button'); cp.className='copy'; cp.innerHTML=svgCopy();
+    cp.setAttribute('aria-label','この番号をコピー');
+    cp.onclick=()=>{ copyText(item.code).then(()=>{
+        cp.classList.add('done'); cp.innerHTML=svgCheck();
+        setTimeout(()=>{ cp.classList.remove('done'); cp.innerHTML=svgCopy(); },1200);
+        setStatus('コピーしました：'+item.code,'ready');
+      }).catch(()=>{ setStatus('コピーできませんでした。長押しで選択してください','err'); }); };
+    top.appendChild(num); if(item.fmt) top.appendChild(fmt); top.appendChild(cp); top.appendChild(del);
 
     const acts=document.createElement('div'); acts.className='acts';
     const b1=document.createElement('button'); b1.className='go primary';
@@ -253,6 +285,17 @@ el('albumBtn').addEventListener('click',()=>el('albumInput').click());
 el('capInput').addEventListener('change',e=>{const f=e.target.files[0]; e.target.value=''; handleFile(f);});
 el('albumInput').addEventListener('change',e=>{const f=e.target.files[0]; e.target.value=''; handleFile(f);});
 resetAllBtn.addEventListener('click',()=>{ history=[]; saveHistory(); render(); setStatus('履歴をリセットしました','ready'); });
+
+/* 直接入力して登録（手入力） */
+const manualInput=el('manualInput'), manualAddBtn=el('manualAddBtn');
+function submitManual(){
+  const code=manualInput.value.trim();
+  if(!code){ setStatus('バーコード番号を入力してください','err'); manualInput.focus(); return; }
+  addScan(code,'手入力');
+  manualInput.value=''; manualInput.focus();
+}
+manualAddBtn.addEventListener('click',submitManual);
+manualInput.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); submitManual(); } });
 
 /* 全バーコードを1行1コードでコピー（事務所へ送る用） */
 function copyText(text){
