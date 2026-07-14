@@ -6,6 +6,13 @@ on:
       - agent/remove-office-copy-label-20260715
     paths:
       - .github/workflows/one-time-copy-label.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/one-time-copy-label.yml
+
+authorizations:
 
 permissions:
   contents: write
@@ -14,8 +21,10 @@ jobs:
   update-label:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout the working branch
         uses: actions/checkout@v4
+        with:
+          ref: agent/remove-office-copy-label-20260715
 
       - name: Replace only the requested label
         shell: bash
@@ -41,4 +50,4 @@ jobs:
           git add index.html
           git diff --cached --check
           git commit -m "すべてコピーボタンの補足文言を削除"
-          git push
+          git push origin HEAD:agent/remove-office-copy-label-20260715
