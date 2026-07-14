@@ -1,0 +1,44 @@
+name: One-time copy button label update
+
+on:
+  push:
+    branches:
+      - agent/remove-office-copy-label-20260715
+    paths:
+      - .github/workflows/one-time-copy-label.yml
+
+permissions:
+  contents: write
+
+jobs:
+  update-label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Replace only the requested label
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("index.html")
+          old = "すべてコピー（事務所へ送る用）"
+          new = "すべてコピー"
+          text = path.read_text(encoding="utf-8")
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"Expected exactly 1 occurrence, found {count}")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+
+      - name: Commit the label change
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git diff --cached --check
+          git commit -m "すべてコピーボタンの補足文言を削除"
+          git push
