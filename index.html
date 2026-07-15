@@ -151,7 +151,7 @@
 
   <button class="copyall" id="copyAllBtn" style="display:none">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-    すべてコピー（事務所へ送る用）
+    すべてコピー
   </button>
 
   <div id="histList"></div>
@@ -321,7 +321,7 @@ copyAllBtn.addEventListener('click',()=>{
     copyAllBtn.classList.add('done');
     if(label) label.textContent=' コピーしました（'+history.length+'件）';
     setStatus('コピーしました（'+history.length+'件）','ready');
-    setTimeout(()=>{ copyAllBtn.classList.remove('done'); if(label) label.textContent=' すべてコピー（事務所へ送る用）'; },1600);
+    setTimeout(()=>{ copyAllBtn.classList.remove('done'); if(label) label.textContent=' すべてコピー'; },1600);
   }).catch(()=>{ setStatus('コピーできませんでした。長押しで選択してください','err'); });
 });
 
