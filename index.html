@@ -82,6 +82,8 @@
     color:var(--muted); cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0;}
   .del:active{background:var(--line2); color:var(--red);}
   .del svg{width:15px; height:15px;}
+  .row .scanned-at{display:flex; align-items:center; gap:6px; margin-top:10px; font-size:12px; font-weight:700; color:var(--muted);}
+  .row .scanned-at svg{width:14px; height:14px; flex:none;}
   .row .acts{display:flex; gap:8px; margin-top:12px;}
   .go{flex:1; display:flex; align-items:center; justify-content:center; gap:6px; text-decoration:none;
     font-family:var(--sans); font-weight:800; font-size:14px; padding:12px; border-radius:10px; cursor:pointer; border:none;}
@@ -208,6 +210,14 @@ function svgArrow(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="curren
 function svgX(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>'; }
 function svgCopy(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'; }
 function svgCheck(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>'; }
+function svgClock(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>'; }
+function formatScannedAt(value){
+  if(!value) return '';
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime())) return '';
+  const pad=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
 
 function render(){
   histCount.textContent='('+history.length+'件)';
@@ -233,6 +243,10 @@ function render(){
       }).catch(()=>{ setStatus('コピーできませんでした。長押しで選択してください','err'); }); };
     top.appendChild(num); if(item.fmt) top.appendChild(fmt); top.appendChild(cp); top.appendChild(del);
 
+    const scannedAtText=formatScannedAt(item.scannedAt);
+    const scannedAt=document.createElement('div'); scannedAt.className='scanned-at';
+    if(scannedAtText) scannedAt.innerHTML=svgClock()+'<span>スキャンした日時：'+scannedAtText+'</span>';
+
     const acts=document.createElement('div'); acts.className='acts';
     const b1=document.createElement('button'); b1.className='go primary';
     b1.innerHTML='機械在庫へ'+svgArrow();
@@ -242,7 +256,7 @@ function render(){
     b2.onclick=()=>openExternal(buildURL(BOARD_URL,item.code));
     acts.appendChild(b1); acts.appendChild(b2);
 
-    row.appendChild(top); row.appendChild(acts);
+    row.appendChild(top); if(scannedAtText) row.appendChild(scannedAt); row.appendChild(acts);
     histList.appendChild(row);
   });
 }
@@ -250,7 +264,7 @@ function render(){
 function addScan(code,fmt){
   // 重複は追加せず先頭へ移動（Q2B）
   history=history.filter(x=>x.code!==code);
-  history.unshift({code,fmt});
+  history.unshift({code,fmt,scannedAt:new Date().toISOString()});
   saveHistory();
   render();
   setStatus('読み取り成功：'+code,'ready');
