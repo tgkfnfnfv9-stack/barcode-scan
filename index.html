@@ -245,7 +245,7 @@ function render(){
 
     const scannedAtText=formatScannedAt(item.scannedAt);
     const scannedAt=document.createElement('div'); scannedAt.className='scanned-at';
-    if(scannedAtText) scannedAt.innerHTML=svgClock()+'<span>スキャンした日時：'+scannedAtText+'</span>';
+    if(scannedAtText) scannedAt.innerHTML=svgClock()+'<span>日時：'+scannedAtText+'</span>';
 
     const acts=document.createElement('div'); acts.className='acts';
     const b1=document.createElement('button'); b1.className='go primary';
