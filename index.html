@@ -226,7 +226,7 @@ const BOARD_URL   = 'https://www.kkmt.co.jp/staff/stock_boards/short_search?barc
 const STOCK_API_URL = 'https://www.kkmt.co.jp/staff/api/stocks/{CODE}';
 const STAFF_ORIGIN = 'https://www.kkmt.co.jp';
 const STAFF_API_ALLOWED = location.origin === STAFF_ORIGIN;
-const STAFF_LAUNCHER_URL = 'https://tgkfnfnfv9-stack.github.io/barcode-scan/staff-loader.js?v=20260807';
+const STAFF_LAUNCHER_URL = 'https://cdn.jsdelivr.net/gh/tgkfnfnfv9-stack/barcode-scan@dfbe27a549619179e8849ba35c6788c0cffe3417/staff-loader.js';
 const STAFF_LAUNCHER_CODE = `javascript:(()=>{const s=document.createElement('script');s.src='${STAFF_LAUNCHER_URL}';document.head.appendChild(s)})()`;
 
 /* 印字≠符号化など、別コードで検索したい機械だけ登録（通常は空でOK）
