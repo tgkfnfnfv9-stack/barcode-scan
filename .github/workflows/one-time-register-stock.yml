@@ -1,0 +1,61 @@
+name: One-time stock fetch on registration
+
+on:
+  push:
+    branches:
+      - agent/fetch-stock-on-register-only
+    paths:
+      - .github/workflows/one-time-register-stock.yml
+
+permissions:
+  contents: write
+
+jobs:
+  update-history-loading:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout working branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/fetch-stock-on-register-only
+
+      - name: Remove reopen-time stock refresh
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("index.html")
+          text = path.read_text(encoding="utf-8")
+
+          pattern = r"\nasync function refreshHistoryStockData\(\)\{\n.*?\n\}\n\nasync function initLib\(\)\{"
+          text, function_count = re.subn(
+              pattern,
+              "\nasync function initLib(){",
+              text,
+              count=1,
+              flags=re.S,
+          )
+          if function_count != 1:
+              raise SystemExit(f"Expected one refreshHistoryStockData function, found {function_count}")
+
+          startup_call = "\nrefreshHistoryStockData();"
+          call_count = text.count(startup_call)
+          if call_count != 1:
+              raise SystemExit(f"Expected one startup refresh call, found {call_count}")
+          text = text.replace(startup_call, "", 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Validate and commit
+        shell: bash
+        run: |
+          git diff --check
+          git diff --exit-code --stat || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Fetch stock data only when registering"
+          git push origin HEAD:agent/fetch-stock-on-register-only
