@@ -225,7 +225,7 @@ function b64ToBytes(id){
 const STAFF_ORIGIN = 'https://www.kkmt.co.jp';
 const MACHINE_URL = 'https://www.kkmt.co.jp/staff/stocks/short_search?barcode={CODE}';
 const BOARD_URL   = 'https://www.kkmt.co.jp/staff/stock_boards/short_search?barcode={CODE}';
-const STOCK_API_URL = '/staff/api/stocks/{CODE}';
+const STOCK_API_URL = STAFF_ORIGIN + '/staff/api/stocks/{CODE}';
 const STAFF_LOADER_URL = 'https://tgkfnfnfv9-stack.github.io/barcode-scan/staff-loader.js';
 const IS_STAFF_MODE = location.origin === STAFF_ORIGIN;
 
