@@ -76,7 +76,9 @@
     box-shadow:0 1px 2px rgba(16,24,40,.04); animation:rise .24s cubic-bezier(.2,.7,.2,1);}
   @keyframes rise{from{opacity:0; transform:translateY(-8px);} to{opacity:1; transform:none;}}
   .row .top{display:flex; align-items:center; gap:10px;}
-  .row .num{font-family:var(--mono); font-size:22px; font-weight:600; letter-spacing:.06em; color:var(--ink); flex:1; word-break:break-all; line-height:1.15;}
+  .row .code-model{display:flex; align-items:baseline; gap:9px; flex:1; min-width:0; flex-wrap:wrap;}
+  .row .num{font-family:var(--mono); font-size:22px; font-weight:600; letter-spacing:.06em; color:var(--ink); word-break:break-all; line-height:1.15;}
+  .row .model{font-size:16px; font-weight:800; color:var(--orange-d); word-break:break-word; line-height:1.2;}
   .row .fmt{font:700 10px/1 var(--mono); letter-spacing:.08em; color:var(--muted); border:1px solid var(--line);
     padding:4px 6px; border-radius:6px; flex:none;}
   .del{flex:none; width:30px; height:30px; border:1px solid var(--line); background:#fff; border-radius:8px;
@@ -85,6 +87,12 @@
   .del svg{width:15px; height:15px;}
   .row .scanned-at{display:flex; align-items:center; gap:6px; margin-top:10px; font-size:12px; font-weight:700; color:var(--muted);}
   .row .scanned-at svg{width:14px; height:14px; flex:none;}
+  .stock-state{margin-top:10px; padding:10px 11px; border-radius:10px; background:var(--line2); color:var(--muted); font-size:12px; font-weight:700;}
+  .stock-state.err{background:#FFF1F0; color:var(--red);}
+  .price-line{display:flex; align-items:baseline; gap:9px; margin-top:12px; padding:11px 12px; border-radius:11px; background:var(--orange-t);}
+  .price-line .label{font-size:12px; font-weight:800; color:var(--orange-d);}
+  .price-line .value{font-size:22px; line-height:1; font-weight:900; color:var(--ink);}
+  .price-line .login-note{font-size:12px; font-weight:700; color:var(--muted);}
   .row .acts{display:flex; gap:8px; margin-top:12px;}
   .go{flex:1; display:flex; align-items:center; justify-content:center; gap:6px; text-decoration:none;
     font-family:var(--sans); font-weight:800; font-size:14px; padding:12px; border-radius:10px; cursor:pointer; border:none;}
@@ -93,6 +101,14 @@
   .go.secondary{background:var(--ink); color:#fff;}
   .go.secondary:active{background:#000;}
   .go svg{width:15px; height:15px;}
+  .detail-toggle{width:100%; margin-top:10px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--ink2);
+    font-family:var(--sans); font-size:13px; font-weight:800; padding:10px 12px; cursor:pointer;}
+  .detail-toggle:active{background:var(--line2);}
+  .stock-details{margin-top:10px; padding-top:4px; border-top:1px solid var(--line2);}
+  .detail-row{display:grid; grid-template-columns:92px minmax(0,1fr); gap:10px; padding:9px 2px; border-bottom:1px solid var(--line2); font-size:13px; line-height:1.55;}
+  .detail-row .detail-label{font-weight:800; color:var(--muted);}
+  .detail-row .detail-value{font-weight:700; color:var(--ink2); white-space:pre-wrap; word-break:break-word;}
+  .stock-photo{display:block; width:100%; max-height:260px; object-fit:contain; margin-top:12px; border:1px solid var(--line); border-radius:10px; background:#fff;}
 
   .manuallabel{display:flex; align-items:center; gap:8px; margin:16px 0 9px; font-size:12px; font-weight:800; color:var(--muted); letter-spacing:.02em;}
   .manuallabel::before,.manuallabel::after{content:""; height:1px; background:var(--line); flex:1;}
@@ -182,6 +198,7 @@ function b64ToBytes(id){
    ========================================================= */
 const MACHINE_URL = 'https://www.kkmt.co.jp/staff/stocks/short_search?barcode={CODE}';
 const BOARD_URL   = 'https://www.kkmt.co.jp/staff/stock_boards/short_search?barcode={CODE}';
+const STOCK_API_URL = 'https://www.kkmt.co.jp/staff/api/stocks/{CODE}';
 
 /* 印字≠符号化など、別コードで検索したい機械だけ登録（通常は空でOK）
    例)  "P008493": "P0084493"   ← 左=スキャン値 / 右=検索に使うコード   */
@@ -203,6 +220,23 @@ let history=loadHistory();   // 最新が先頭
 
 function setStatus(msg,state){ statusEl.textContent=msg; ledEl.className='led'+(state?' '+state:''); }
 function buildURL(tpl,code){ const c=OVERRIDE_MAP[code]||code; return tpl.replace('{CODE}', encodeURIComponent(c)); }
+function formatPrice(value){
+  if(value===null || value===undefined || String(value).trim()==='') return '';
+  const raw=String(value).trim();
+  const normalized=raw.replace(/[¥￥,\s]/g,'');
+  if(/^[-+]?\d+(?:\.\d+)?$/.test(normalized)) return '¥'+Number(normalized).toLocaleString('ja-JP');
+  return raw;
+}
+function displayStockValue(key,value){
+  if(value===null || value===undefined || String(value).trim()==='') return '—';
+  if(key==='price' || key==='event_price') return formatPrice(value)||'—';
+  if(key==='type' && value==='Machine') return '機械';
+  return String(value);
+}
+function stockPhotoURL(value){
+  if(!value) return '';
+  try{ return new URL(value,'https://www.kkmt.co.jp').href; }catch(e){ return ''; }
+}
 
 /* 内蔵ブラウザではなく外部ブラウザ(Safari/Chrome)で開く */
 function openExternal(url){ const w=window.open(url,'_blank'); if(!w){ location.href=url; } }
@@ -230,7 +264,9 @@ function render(){
     const row=document.createElement('div'); row.className='row';
 
     const top=document.createElement('div'); top.className='top';
+    const codeModel=document.createElement('div'); codeModel.className='code-model';
     const num=document.createElement('div'); num.className='num'; num.textContent=item.code;
+    const model=document.createElement('div'); model.className='model'; model.textContent=(item.stock&&item.stock.model_type)||'';
     const fmt=document.createElement('span'); fmt.className='fmt'; fmt.textContent=item.fmt||'';
     const del=document.createElement('button'); del.className='del'; del.innerHTML=svgX();
     del.setAttribute('aria-label','削除');
@@ -242,11 +278,56 @@ function render(){
         setTimeout(()=>{ cp.classList.remove('done'); cp.innerHTML=svgCopy(); },1200);
         setStatus('コピーしました：'+item.code,'ready');
       }).catch(()=>{ setStatus('コピーできませんでした。長押しで選択してください','err'); }); };
-    top.appendChild(num); if(item.fmt) top.appendChild(fmt); top.appendChild(cp); top.appendChild(del);
+    codeModel.appendChild(num); if(model.textContent) codeModel.appendChild(model);
+    top.appendChild(codeModel); if(item.fmt) top.appendChild(fmt); top.appendChild(cp); top.appendChild(del);
 
     const scannedAtText=formatScannedAt(item.scannedAt);
     const scannedAt=document.createElement('div'); scannedAt.className='scanned-at';
     if(scannedAtText) scannedAt.innerHTML=svgClock()+'<span>日時：'+scannedAtText+'</span>';
+
+    let stockState=null;
+    if(item.stockLoading){
+      stockState=document.createElement('div'); stockState.className='stock-state'; stockState.textContent='機械情報を取得中…';
+    }else if(item.stockError){
+      stockState=document.createElement('div'); stockState.className='stock-state err'; stockState.textContent='機械情報を取得できませんでした';
+    }
+
+    let priceLine=null, detailToggle=null, details=null;
+    if(item.stock){
+      priceLine=document.createElement('div'); priceLine.className='price-line';
+      const priceLabel=document.createElement('span'); priceLabel.className='label'; priceLabel.textContent='金額';
+      const price=formatPrice(item.stock.price);
+      if(price){
+        const priceValue=document.createElement('span'); priceValue.className='value'; priceValue.textContent=price;
+        priceLine.appendChild(priceLabel); priceLine.appendChild(priceValue);
+      }else{
+        const loginNote=document.createElement('span'); loginNote.className='login-note'; loginNote.textContent='ログイン後に表示';
+        priceLine.appendChild(priceLabel); priceLine.appendChild(loginNote);
+      }
+
+      details=document.createElement('div'); details.className='stock-details'; details.hidden=!item.detailsOpen;
+      const fields=[
+        ['barcode','バーコード'], ['name','機械名'], ['maker','メーカー'], ['model_type','型番'],
+        ['year_type','年式'], ['detail_spec','仕様'], ['event_name','入札会名'],
+        ['event_price','入札会価格'], ['price','金額'], ['type','種別']
+      ];
+      fields.forEach(([key,label])=>{
+        const detailRow=document.createElement('div'); detailRow.className='detail-row';
+        const detailLabel=document.createElement('div'); detailLabel.className='detail-label'; detailLabel.textContent=label;
+        const detailValue=document.createElement('div'); detailValue.className='detail-value'; detailValue.textContent=displayStockValue(key,item.stock[key]);
+        detailRow.appendChild(detailLabel); detailRow.appendChild(detailValue); details.appendChild(detailRow);
+      });
+      const photoURL=stockPhotoURL(item.stock.head_picture_url);
+      if(photoURL){
+        const photo=document.createElement('img'); photo.className='stock-photo'; photo.src=photoURL; photo.alt='機械画像'; photo.loading='lazy';
+        details.appendChild(photo);
+      }
+
+      detailToggle=document.createElement('button'); detailToggle.className='detail-toggle';
+      detailToggle.textContent=item.detailsOpen?'▲ 詳細を閉じる':'▼ 詳細を見る';
+      detailToggle.setAttribute('aria-expanded',item.detailsOpen?'true':'false');
+      detailToggle.onclick=()=>{ item.detailsOpen=!item.detailsOpen; render(); };
+    }
 
     const acts=document.createElement('div'); acts.className='acts';
     const b1=document.createElement('button'); b1.className='go primary';
@@ -257,18 +338,56 @@ function render(){
     b2.onclick=()=>openExternal(buildURL(BOARD_URL,item.code));
     acts.appendChild(b1); acts.appendChild(b2);
 
-    row.appendChild(top); if(scannedAtText) row.appendChild(scannedAt); row.appendChild(acts);
+    row.appendChild(top); if(scannedAtText) row.appendChild(scannedAt); if(stockState) row.appendChild(stockState);
+    if(priceLine) row.appendChild(priceLine); row.appendChild(acts); if(detailToggle) row.appendChild(detailToggle); if(details) row.appendChild(details);
     histList.appendChild(row);
   });
 }
 
 function addScan(code,fmt){
   // 重複は追加せず先頭へ移動（Q2B）
+  const previous=history.find(x=>x.code===code);
   history=history.filter(x=>x.code!==code);
-  history.unshift({code,fmt,scannedAt:new Date().toISOString()});
+  const item={code,fmt,scannedAt:new Date().toISOString(),stock:previous&&previous.stock,stockLoading:true,stockError:''};
+  history.unshift(item);
   saveHistory();
   render();
   setStatus('読み取り成功：'+code,'ready');
+  loadStock(item);
+}
+
+async function fetchStock(code){
+  const response=await fetch(buildURL(STOCK_API_URL,code),{
+    method:'GET', credentials:'include', headers:{Accept:'application/json'}
+  });
+  if(!response.ok) throw new Error('API '+response.status);
+  return response.json();
+}
+
+async function loadStock(item){
+  try{
+    const stock=await fetchStock(item.code);
+    if(!history.includes(item)) return;
+    item.stock=stock; item.stockError='';
+  }catch(e){
+    if(!history.includes(item)) return;
+    item.stockError=(e&&e.message)||'API error';
+  }finally{
+    if(history.includes(item)){ item.stockLoading=false; saveHistory(); render(); }
+  }
+}
+
+async function refreshHistoryStockData(){
+  const items=[...history];
+  if(!items.length) return;
+  items.forEach(item=>{ item.stockLoading=true; item.stockError=''; });
+  render();
+  await Promise.all(items.map(async item=>{
+    try{ item.stock=await fetchStock(item.code); item.stockError=''; }
+    catch(e){ item.stockError=(e&&e.message)||'API error'; }
+    finally{ item.stockLoading=false; }
+  }));
+  saveHistory(); render();
 }
 
 async function initLib(){
@@ -341,6 +460,7 @@ copyAllBtn.addEventListener('click',()=>{
 });
 
 render();
+refreshHistoryStockData();
 (async()=>{ try{ await initLib(); }catch(e){ setStatus('初期化に失敗：'+((e&&e.message)||e),'err'); } })();
 </script>
 </body>
