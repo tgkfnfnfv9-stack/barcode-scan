@@ -131,11 +131,8 @@
   .staff-guide{background:#FFF7F2; border:1px solid #F3C7AE; color:var(--ink2);}
   .staff-guide b{display:block; color:var(--orange-d); font-size:13px; margin-bottom:4px;}
   .staff-guide p{margin:0 0 8px;}
-  .staff-guide ol{margin:8px 0 0; padding-left:20px; color:var(--muted);}
-  .staff-guide-actions{display:flex; gap:8px; flex-wrap:wrap;}
-  .staff-launch,.staff-open{flex:1; min-width:160px; border-radius:10px; padding:10px 11px; font-family:var(--sans); font-weight:800; font-size:12px; text-align:center;}
-  .staff-launch{border:0; background:var(--orange); color:#fff; cursor:pointer;}
-  .staff-open{border:1px solid var(--line); background:#fff; color:var(--ink2); text-decoration:none;}
+  .staff-open{display:block; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--ink2); padding:10px 11px;
+    font-family:var(--sans); font-weight:800; font-size:12px; text-align:center; text-decoration:none;}
   .staff-active{background:#ECF8F0; border:1px solid #B8DFC5; color:#207A45; font-weight:800;}
   .staff-active[hidden],.staff-guide[hidden]{display:none;}
 
@@ -174,18 +171,11 @@
   </section>
 
   <section class="staff-guide" id="staffModeGuide">
-    <b>会社の機械情報・社員価格を表示するには</b>
-    <p>会社サイトにログインした状態で「社内バーコード」を起動すると、CORSに遮断されず機械情報と社員用価格を取得できます。</p>
-    <div class="staff-guide-actions">
-      <button class="staff-launch" id="copyStaffLauncherBtn">社内バーコード起動コードをコピー</button>
-      <a class="staff-open" href="https://www.kkmt.co.jp/staff/stocks" target="_blank" rel="noopener">会社サイトを開く</a>
-    </div>
-    <ol>
-      <li>初回だけ、上の起動コードをコピーしてSafariのブックマークURLに貼り付け、名前を「社内バーコード」にします。</li>
-      <li>会社サイトへログイン後、その「社内バーコード」をタップしてスキャナーを起動します。</li>
-    </ol>
+    <b>会社の機械情報・社員価格</b>
+    <p>会社APIは同一オリジンの会社版で表示します。iPhone Safariでは次の通常URLを開いてください。</p>
+    <a class="staff-open" href="https://www.kkmt.co.jp/staff/barcode-scan.html">会社版バーコードスキャナーを開く</a>
   </section>
-  <div class="staff-active" id="staffModeActive" hidden>社内モード：社員ログインを使って機械情報を取得します</div>
+  <div class="staff-active" id="staffModeActive" hidden>会社API：ログイン済みセッションで機械情報を取得します</div>
 
   <div class="histhead">
     <b>読み取り履歴 <span id="histCount">(0件)</span></b>
@@ -225,9 +215,8 @@ function b64ToBytes(id){
 const STAFF_ORIGIN = 'https://www.kkmt.co.jp';
 const MACHINE_URL = 'https://www.kkmt.co.jp/staff/stocks/short_search?barcode={CODE}';
 const BOARD_URL   = 'https://www.kkmt.co.jp/staff/stock_boards/short_search?barcode={CODE}';
-const STOCK_API_URL = STAFF_ORIGIN + '/staff/api/stocks/{CODE}';
-const STAFF_LOADER_URL = 'https://tgkfnfnfv9-stack.github.io/barcode-scan/staff-loader.js';
-const IS_STAFF_MODE = location.origin === STAFF_ORIGIN;
+const STOCK_API_PATH = '/staff/api/stocks/{CODE}';
+const IS_COMPANY_ORIGIN = location.origin === STAFF_ORIGIN;
 
 /* 印字≠符号化など、別コードで検索したい機械だけ登録（通常は空でOK）
    例)  "P008493": "P0084493"   ← 左=スキャン値 / 右=検索に使うコード   */
@@ -239,9 +228,9 @@ const READER_OPTS={tryHarder:true, maxNumberOfSymbols:1};
 const el=id=>document.getElementById(id);
 const ledEl=el('led'), statusEl=el('status');
 const histList=el('histList'), histCount=el('histCount'), emptyState=el('emptyState'), resetAllBtn=el('resetAllBtn'), copyAllBtn=el('copyAllBtn');
-const staffModeGuide=el('staffModeGuide'), staffModeActive=el('staffModeActive'), copyStaffLauncherBtn=el('copyStaffLauncherBtn');
-if(staffModeGuide) staffModeGuide.hidden=IS_STAFF_MODE;
-if(staffModeActive) staffModeActive.hidden=!IS_STAFF_MODE;
+const staffModeGuide=el('staffModeGuide'), staffModeActive=el('staffModeActive');
+if(staffModeGuide) staffModeGuide.hidden=IS_COMPANY_ORIGIN;
+if(staffModeActive) staffModeActive.hidden=!IS_COMPANY_ORIGIN;
 let readBarcodes=null;
 
 /* 端末内に保存して、閉じても更新しても履歴を保持 */
@@ -339,9 +328,8 @@ function render(){
 
       details=document.createElement('div'); details.className='stock-details'; details.hidden=!item.detailsOpen;
       const fields=[
-        ['barcode','バーコード'], ['name','機械名'], ['maker','メーカー'], ['model_type','型番'],
-        ['year_type','年式'], ['detail_spec','仕様'], ['event_name','入札会名'],
-        ['event_price','入札会価格'], ['price','金額'], ['type','種別']
+        ['name','機械名'], ['maker','メーカー'], ['model_type','型番'], ['year_type','年式'],
+        ['detail_spec','仕様'], ['event_name','入札会名'], ['event_price','入札会価格'], ['type','種別']
       ];
       fields.forEach(([key,label])=>{
         const detailRow=document.createElement('div'); detailRow.className='detail-row';
@@ -389,8 +377,8 @@ function addScan(code,fmt){
 }
 
 async function fetchStock(code){
-  if(!IS_STAFF_MODE) throw new Error('機械情報は「社内バーコード」で表示できます');
-  const response=await fetch(buildURL(STOCK_API_URL,code),{
+  if(!IS_COMPANY_ORIGIN) throw new Error('機械情報は会社版URLで表示できます');
+  const response=await fetch(buildURL(STOCK_API_PATH,code),{
     method:'GET', credentials:'same-origin', cache:'no-store', headers:{Accept:'application/json'}
   });
   if(!response.ok) throw new Error('API '+response.status);
@@ -452,19 +440,6 @@ el('albumBtn').addEventListener('click',()=>el('albumInput').click());
 el('capInput').addEventListener('change',e=>{const f=e.target.files[0]; e.target.value=''; handleFile(f);});
 el('albumInput').addEventListener('change',e=>{const f=e.target.files[0]; e.target.value=''; handleFile(f);});
 
-function buildStaffLauncher(){
-  return "javascript:(()=>{var s=document.createElement('script');s.src='"+STAFF_LOADER_URL+"?v='+Date.now();document.head.appendChild(s)})()";
-}
-if(copyStaffLauncherBtn){
-  copyStaffLauncherBtn.addEventListener('click',()=>{
-    copyText(buildStaffLauncher()).then(()=>{
-      setStatus('社内バーコード起動コードをコピーしました','ready');
-      const original=copyStaffLauncherBtn.textContent;
-      copyStaffLauncherBtn.textContent='コピーしました';
-      setTimeout(()=>{ copyStaffLauncherBtn.textContent=original; },1400);
-    }).catch(()=>{ setStatus('起動コードをコピーできませんでした','err'); });
-  });
-}
 resetAllBtn.addEventListener('click',()=>{ history=[]; saveHistory(); render(); setStatus('履歴をリセットしました','ready'); });
 
 /* 直接入力して登録（手入力） */
