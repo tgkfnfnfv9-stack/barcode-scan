@@ -376,19 +376,6 @@ async function loadStock(item){
   }
 }
 
-async function refreshHistoryStockData(){
-  const items=[...history];
-  if(!items.length) return;
-  items.forEach(item=>{ item.stockLoading=true; item.stockError=''; });
-  render();
-  await Promise.all(items.map(async item=>{
-    try{ item.stock=await fetchStock(item.code); item.stockError=''; }
-    catch(e){ item.stockError=(e&&e.message)||'API error'; }
-    finally{ item.stockLoading=false; }
-  }));
-  saveHistory(); render();
-}
-
 async function initLib(){
   setStatus('準備中…','busy');
   const jsText=new TextDecoder('utf-8').decode(b64ToBytes('zxjs'));
@@ -460,7 +447,6 @@ copyAllBtn.addEventListener('click',()=>{
 });
 
 render();
-refreshHistoryStockData();
 (async()=>{ try{ await initLib(); }catch(e){ setStatus('初期化に失敗：'+((e&&e.message)||e),'err'); } })();
 </script>
 </body>
