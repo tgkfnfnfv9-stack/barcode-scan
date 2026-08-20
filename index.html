@@ -53,17 +53,6 @@
   .ghost:active{background:var(--line2);}
   .ghost svg{width:18px; height:18px; opacity:.75;}
 
-  .authbar{display:flex; align-items:center; gap:12px; margin:0 0 12px; padding:11px 12px; background:var(--card);
-    border:1px solid var(--line); border-radius:13px; box-shadow:0 1px 2px rgba(16,24,40,.04);}
-  .authcopy{flex:1; min-width:0;}
-  .authcopy b{display:flex; align-items:center; gap:7px; font-size:13px; color:var(--ink);}
-  .authdot{width:8px; height:8px; border-radius:50%; background:var(--muted); flex:none;}
-  .authbar.signed-in .authdot{background:var(--green);}
-  .authcopy span{display:block; margin-top:3px; font-size:11px; font-weight:700; color:var(--muted); line-height:1.4;}
-  .authbtn{flex:none; border:1px solid var(--orange); border-radius:9px; background:var(--orange-t); color:var(--orange-d);
-    font-family:var(--sans); font-size:12px; font-weight:800; padding:9px 11px; cursor:pointer;}
-  .authbtn:active{background:var(--orange); color:#fff;}
-
   .histhead{display:flex; align-items:center; justify-content:space-between; margin:22px 4px 10px;}
   .histhead b{font-size:14px; font-weight:800; color:var(--ink);}
   .histhead b span{color:var(--orange);}
@@ -153,14 +142,6 @@
     <div class="status"><i class="led" id="led"></i><span id="status">起動中…</span></div>
   </header>
 
-  <div class="authbar" id="authBar">
-    <div class="authcopy">
-      <b><i class="authdot"></i>社員価格</b>
-      <span id="authState">未認証（一般情報のみ）</span>
-    </div>
-    <button class="authbtn" id="authBtn">社員価格ログイン</button>
-  </div>
-
   <section class="panel">
     <button class="scanbtn" id="capBtn">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
@@ -230,13 +211,16 @@ const OVERRIDE_MAP = {
 const READER_OPTS={tryHarder:true, maxNumberOfSymbols:1};
 const el=id=>document.getElementById(id);
 const ledEl=el('led'), statusEl=el('status');
-const authBar=el('authBar'), authStateEl=el('authState'), authBtn=el('authBtn');
 const histList=el('histList'), histCount=el('histCount'), emptyState=el('emptyState'), resetAllBtn=el('resetAllBtn'), copyAllBtn=el('copyAllBtn');
 let readBarcodes=null;
+let authRestartNeeded=false;
 
 /* 端末内に保存して、閉じても更新しても履歴を保持 */
 const STORE_KEY='kkmt_barcode_history';
 const AUTH_STORE_KEY='kkmt_barcode_auth';
+const AUTH_ATTEMPT_KEY='kkmt_barcode_auth_attempted_at';
+const AUTH_PENDING_CODE_KEY='kkmt_barcode_auth_pending_code';
+const AUTH_RETRY_DELAY=5*60*1000;
 function loadHistory(){ try{ const v=localStorage.getItem(STORE_KEY); const a=v?JSON.parse(v):[]; return Array.isArray(a)?a:[]; }catch(e){ return []; } }
 function saveHistory(){ try{ localStorage.setItem(STORE_KEY, JSON.stringify(history)); }catch(e){} }
 let history=loadHistory();   // 最新が先頭
@@ -255,15 +239,25 @@ function activeAuthToken(){
   if(!Number.isFinite(expiresAt) || expiresAt<=Date.now()){ authSession=null; saveAuth(); return ''; }
   return authSession.token;
 }
-function renderAuth(){
-  const token=activeAuthToken();
-  authBar.classList.toggle('signed-in',!!token);
-  authBtn.textContent=token?'認証を更新':'社員価格ログイン';
-  if(!token){ authStateEl.textContent='未認証（一般情報のみ）'; return; }
-  const expiresAt=new Date(authSession.expires_at);
-  authStateEl.textContent='価格取得可能（'+expiresAt.toLocaleDateString('ja-JP')+'まで）';
+function clearAuthAttempt(){
+  try{ sessionStorage.removeItem(AUTH_ATTEMPT_KEY); }catch(e){}
 }
-function startAuth(){ window.location.assign(AUTH_START_URL); }
+function startAutomaticAuth(){
+  if(activeAuthToken()) return false;
+  let attemptedAt=0;
+  try{ attemptedAt=Number(sessionStorage.getItem(AUTH_ATTEMPT_KEY))||0; }catch(e){}
+  if(attemptedAt && Date.now()-attemptedAt<AUTH_RETRY_DELAY) return false;
+  try{ sessionStorage.setItem(AUTH_ATTEMPT_KEY,String(Date.now())); }catch(e){}
+  setStatus('社員価格を確認中…','busy');
+  window.location.assign(AUTH_START_URL);
+  return true;
+}
+function savePendingAuthCode(code){
+  try{ sessionStorage.setItem(AUTH_PENDING_CODE_KEY,code); }catch(e){}
+}
+function takePendingAuthCode(){
+  try{ const code=sessionStorage.getItem(AUTH_PENDING_CODE_KEY)||''; sessionStorage.removeItem(AUTH_PENDING_CODE_KEY); return code; }catch(e){ return ''; }
+}
 async function exchangeAuthCode(){
   const currentURL=new URL(window.location.href);
   const code=currentURL.searchParams.get('auth_code');
@@ -280,7 +274,7 @@ async function exchangeAuthCode(){
   if(!response.ok) throw new Error(data.error||('認証API '+response.status));
   if(!data.token || !data.expires_at) throw new Error('認証情報の形式が不正です');
   authSession={token:data.token,expires_at:data.expires_at};
-  saveAuth(); renderAuth(); setStatus('社員価格ログイン完了','ready');
+  saveAuth(); clearAuthAttempt(); setStatus('社員価格ログイン完了','ready');
 }
 
 function setStatus(msg,state){ statusEl.textContent=msg; ledEl.className='led'+(state?' '+state:''); }
@@ -431,9 +425,10 @@ async function fetchStock(code){
   let token=activeAuthToken();
   let response=await requestStock(code,token);
   if(response.status===401 && token){
-    authSession=null; saveAuth(); renderAuth();
+    authSession=null; saveAuth(); clearAuthAttempt(); savePendingAuthCode(code);
     setStatus('社員価格ログインの期限が切れました','err');
     token=''; response=await requestStock(code,token);
+    authRestartNeeded=true;
   }
   if(!response.ok){
     let data={};
@@ -453,6 +448,7 @@ async function loadStock(item){
     item.stockError=(e&&e.message)||'API error';
   }finally{
     if(history.includes(item)){ item.stockLoading=false; saveHistory(); render(); }
+    if(authRestartNeeded){ authRestartNeeded=false; setTimeout(startAutomaticAuth,0); }
   }
 }
 
@@ -484,7 +480,6 @@ el('capBtn').addEventListener('click',()=>el('capInput').click());
 el('albumBtn').addEventListener('click',()=>el('albumInput').click());
 el('capInput').addEventListener('change',e=>{const f=e.target.files[0]; e.target.value=''; handleFile(f);});
 el('albumInput').addEventListener('change',e=>{const f=e.target.files[0]; e.target.value=''; handleFile(f);});
-authBtn.addEventListener('click',startAuth);
 
 resetAllBtn.addEventListener('click',()=>{ history=[]; saveHistory(); render(); setStatus('履歴をリセットしました','ready'); });
 
@@ -527,10 +522,16 @@ copyAllBtn.addEventListener('click',()=>{
   }).catch(()=>{ setStatus('コピーできませんでした。長押しで選択してください','err'); });
 });
 
-render(); renderAuth();
+render();
 (async()=>{
   let authError='';
-  try{ await exchangeAuthCode(); }catch(e){ renderAuth(); authError='社員認証に失敗：'+((e&&e.message)||e); }
+  try{ await exchangeAuthCode(); }catch(e){ clearAuthAttempt(); authError='社員認証に失敗：'+((e&&e.message)||e); }
+  if(!activeAuthToken() && !authError && startAutomaticAuth()) return;
+  const pendingCode=activeAuthToken()?takePendingAuthCode():'';
+  if(pendingCode){
+    const pendingItem=history.find(item=>item.code===pendingCode);
+    if(pendingItem){ pendingItem.stockLoading=true; pendingItem.stockError=''; render(); await loadStock(pendingItem); }
+  }
   try{ await initLib(); }catch(e){ setStatus('初期化に失敗：'+((e&&e.message)||e),'err'); }
   if(authError) setStatus(authError,'err');
 })();
