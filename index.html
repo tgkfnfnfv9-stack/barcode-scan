@@ -53,6 +53,17 @@
   .ghost:active{background:var(--line2);}
   .ghost svg{width:18px; height:18px; opacity:.75;}
 
+  .authbar{display:flex; align-items:center; gap:12px; margin:0 0 12px; padding:11px 12px; background:var(--card);
+    border:1px solid var(--line); border-radius:13px; box-shadow:0 1px 2px rgba(16,24,40,.04);}
+  .authcopy{flex:1; min-width:0;}
+  .authcopy b{display:flex; align-items:center; gap:7px; font-size:13px; color:var(--ink);}
+  .authdot{width:8px; height:8px; border-radius:50%; background:var(--muted); flex:none;}
+  .authbar.signed-in .authdot{background:var(--green);}
+  .authcopy span{display:block; margin-top:3px; font-size:11px; font-weight:700; color:var(--muted); line-height:1.4;}
+  .authbtn{flex:none; border:1px solid var(--orange); border-radius:9px; background:var(--orange-t); color:var(--orange-d);
+    font-family:var(--sans); font-size:12px; font-weight:800; padding:9px 11px; cursor:pointer;}
+  .authbtn:active{background:var(--orange); color:#fff;}
+
   .histhead{display:flex; align-items:center; justify-content:space-between; margin:22px 4px 10px;}
   .histhead b{font-size:14px; font-weight:800; color:var(--ink);}
   .histhead b span{color:var(--orange);}
@@ -142,6 +153,14 @@
     <div class="status"><i class="led" id="led"></i><span id="status">起動中…</span></div>
   </header>
 
+  <div class="authbar" id="authBar">
+    <div class="authcopy">
+      <b><i class="authdot"></i>社員価格</b>
+      <span id="authState">未認証（一般情報のみ）</span>
+    </div>
+    <button class="authbtn" id="authBtn">社員価格ログイン</button>
+  </div>
+
   <section class="panel">
     <button class="scanbtn" id="capBtn">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
@@ -198,7 +217,9 @@ function b64ToBytes(id){
    ========================================================= */
 const MACHINE_URL = 'https://www.kkmt.co.jp/staff/stocks/short_search?barcode={CODE}';
 const BOARD_URL   = 'https://www.kkmt.co.jp/staff/stock_boards/short_search?barcode={CODE}';
-const STOCK_API_URL = 'https://kkmt-stock-proxy.otrblgdar.chatgpt.site/stocks/{CODE}';
+const STOCK_API_URL = 'https://www.kkmt.co.jp/staff/api/stocks/{CODE}';
+const AUTH_START_URL = 'https://www.kkmt.co.jp/staff/api/barcode_auth/start';
+const AUTH_EXCHANGE_URL = 'https://www.kkmt.co.jp/staff/api/barcode_auth/exchange';
 
 /* 印字≠符号化など、別コードで検索したい機械だけ登録（通常は空でOK）
    例)  "P008493": "P0084493"   ← 左=スキャン値 / 右=検索に使うコード   */
@@ -209,14 +230,58 @@ const OVERRIDE_MAP = {
 const READER_OPTS={tryHarder:true, maxNumberOfSymbols:1};
 const el=id=>document.getElementById(id);
 const ledEl=el('led'), statusEl=el('status');
+const authBar=el('authBar'), authStateEl=el('authState'), authBtn=el('authBtn');
 const histList=el('histList'), histCount=el('histCount'), emptyState=el('emptyState'), resetAllBtn=el('resetAllBtn'), copyAllBtn=el('copyAllBtn');
 let readBarcodes=null;
 
 /* 端末内に保存して、閉じても更新しても履歴を保持 */
 const STORE_KEY='kkmt_barcode_history';
+const AUTH_STORE_KEY='kkmt_barcode_auth';
 function loadHistory(){ try{ const v=localStorage.getItem(STORE_KEY); const a=v?JSON.parse(v):[]; return Array.isArray(a)?a:[]; }catch(e){ return []; } }
 function saveHistory(){ try{ localStorage.setItem(STORE_KEY, JSON.stringify(history)); }catch(e){} }
 let history=loadHistory();   // 最新が先頭
+
+function loadAuth(){
+  try{ const v=localStorage.getItem(AUTH_STORE_KEY); const a=v?JSON.parse(v):null; return a&&typeof a==='object'?a:null; }catch(e){ return null; }
+}
+function saveAuth(){
+  try{ authSession?localStorage.setItem(AUTH_STORE_KEY,JSON.stringify(authSession)):localStorage.removeItem(AUTH_STORE_KEY); }catch(e){}
+}
+let authSession=loadAuth();
+
+function activeAuthToken(){
+  if(!authSession || !authSession.token || !authSession.expires_at){ authSession=null; saveAuth(); return ''; }
+  const expiresAt=Date.parse(authSession.expires_at);
+  if(!Number.isFinite(expiresAt) || expiresAt<=Date.now()){ authSession=null; saveAuth(); return ''; }
+  return authSession.token;
+}
+function renderAuth(){
+  const token=activeAuthToken();
+  authBar.classList.toggle('signed-in',!!token);
+  authBtn.textContent=token?'認証を更新':'社員価格ログイン';
+  if(!token){ authStateEl.textContent='未認証（一般情報のみ）'; return; }
+  const expiresAt=new Date(authSession.expires_at);
+  authStateEl.textContent='価格取得可能（'+expiresAt.toLocaleDateString('ja-JP')+'まで）';
+}
+function startAuth(){ window.location.assign(AUTH_START_URL); }
+async function exchangeAuthCode(){
+  const currentURL=new URL(window.location.href);
+  const code=currentURL.searchParams.get('auth_code');
+  if(!code) return;
+  currentURL.searchParams.delete('auth_code');
+  window.history.replaceState(null,'',currentURL.pathname+currentURL.search+currentURL.hash);
+  setStatus('社員認証中…','busy');
+  const response=await fetch(AUTH_EXCHANGE_URL,{
+    method:'POST', mode:'cors', credentials:'omit', cache:'no-store',
+    headers:{Accept:'application/json','Content-Type':'application/json'}, body:JSON.stringify({code})
+  });
+  let data={};
+  try{ data=await response.json(); }catch(e){}
+  if(!response.ok) throw new Error(data.error||('認証API '+response.status));
+  if(!data.token || !data.expires_at) throw new Error('認証情報の形式が不正です');
+  authSession={token:data.token,expires_at:data.expires_at};
+  saveAuth(); renderAuth(); setStatus('社員価格ログイン完了','ready');
+}
 
 function setStatus(msg,state){ statusEl.textContent=msg; ledEl.className='led'+(state?' '+state:''); }
 function buildURL(tpl,code){ const c=OVERRIDE_MAP[code]||code; return tpl.replace('{CODE}', encodeURIComponent(c)); }
@@ -355,11 +420,26 @@ function addScan(code,fmt){
   loadStock(item);
 }
 
-async function fetchStock(code){
-  const response=await fetch(buildURL(STOCK_API_URL,code),{
-    method:'GET', credentials:'omit', cache:'no-store', headers:{Accept:'application/json'}
+function requestStock(code,token){
+  const headers={Accept:'application/json'};
+  if(token) headers.Authorization='Bearer '+token;
+  return fetch(buildURL(STOCK_API_URL,code),{
+    method:'GET', mode:'cors', credentials:'omit', cache:'no-store', headers
   });
-  if(!response.ok) throw new Error('API '+response.status);
+}
+async function fetchStock(code){
+  let token=activeAuthToken();
+  let response=await requestStock(code,token);
+  if(response.status===401 && token){
+    authSession=null; saveAuth(); renderAuth();
+    setStatus('社員価格ログインの期限が切れました','err');
+    token=''; response=await requestStock(code,token);
+  }
+  if(!response.ok){
+    let data={};
+    try{ data=await response.json(); }catch(e){}
+    throw new Error(data.error||('API '+response.status));
+  }
   return response.json();
 }
 
@@ -404,6 +484,7 @@ el('capBtn').addEventListener('click',()=>el('capInput').click());
 el('albumBtn').addEventListener('click',()=>el('albumInput').click());
 el('capInput').addEventListener('change',e=>{const f=e.target.files[0]; e.target.value=''; handleFile(f);});
 el('albumInput').addEventListener('change',e=>{const f=e.target.files[0]; e.target.value=''; handleFile(f);});
+authBtn.addEventListener('click',startAuth);
 
 resetAllBtn.addEventListener('click',()=>{ history=[]; saveHistory(); render(); setStatus('履歴をリセットしました','ready'); });
 
@@ -446,8 +527,13 @@ copyAllBtn.addEventListener('click',()=>{
   }).catch(()=>{ setStatus('コピーできませんでした。長押しで選択してください','err'); });
 });
 
-render();
-(async()=>{ try{ await initLib(); }catch(e){ setStatus('初期化に失敗：'+((e&&e.message)||e),'err'); } })();
+render(); renderAuth();
+(async()=>{
+  let authError='';
+  try{ await exchangeAuthCode(); }catch(e){ renderAuth(); authError='社員認証に失敗：'+((e&&e.message)||e); }
+  try{ await initLib(); }catch(e){ setStatus('初期化に失敗：'+((e&&e.message)||e),'err'); }
+  if(authError) setStatus(authError,'err');
+})();
 </script>
 </body>
 </html>
