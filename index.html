@@ -480,7 +480,7 @@ async function initLib(){
 
 function pickMachineBarcode(results){
   for(const result of results||[]){
-    const code=String(result&&result.text||'').trim().toUpperCase().replace(/\\s+/g,'');
+    const code=String(result&&result.text||'').trim().toUpperCase().replace(/\s+/g,'');
     if(MACHINE_CODE_RE.test(code)) return {text:code,format:result.format||''};
   }
   return null;
