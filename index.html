@@ -291,7 +291,7 @@ function decodeBarcodes(input,options){
 }
 function updateScanButton(){
   el('capBtn').disabled=!readBarcodes||fileScanBusy;
-  el('scanButtonLabel').textContent=!readBarcodes?'準備中…':fileScanBusy?'写真を解析中…':history.length?'次をスキャン':'スキャン開始';
+  el('scanButtonLabel').textContent=!readBarcodes?'準備中…':fileScanBusy?'写真を解析中…':history.length?'直接スキャン':'スキャン開始';
 }
 function showScanNotice(message,isError=false){
   const notice=el('scanNotice');
@@ -728,7 +728,7 @@ async function startScanner(){
     if(cameraSession!==session){stream.getTracks().forEach(track=>track.stop()); return;}
     session.stream=stream;
     stream.getVideoTracks().forEach(track=>{
-      track.addEventListener('ended',()=>failScanner(session,'カメラが停止しました。「次をスキャン」または「スキャン開始」で再開してください。'));
+      track.addEventListener('ended',()=>failScanner(session,'カメラが停止しました。「直接スキャン」または「スキャン開始」で再開してください。'));
       track.addEventListener('mute',()=>failScanner(session,'カメラが一時停止しました。スキャンボタンから再開してください。'));
     });
     cameraVideo.srcObject=stream;
