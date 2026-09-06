@@ -69,7 +69,7 @@ test('live decode closes camera and registers only after confirmation in another
   assert.equal(a.api.history()[0].stock.model_type,'テスト型番');
   assert.match(a.get('scanNotice').textContent,/登録しました/);
   assert.equal(a.get('scanNotice').scrolled,true);
-  assert.equal(a.get('scanButtonLabel').textContent,'次をスキャン');
+  assert.equal(a.get('scanButtonLabel').textContent,'直接スキャン');
   assert.equal(a.requests.length,1);
   assert.equal(a.timers.size,0);
   assert.equal(JSON.parse(a.storage.get('kkmt_barcode_history'))[0].code,'P009000');
