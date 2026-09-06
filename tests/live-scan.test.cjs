@@ -69,7 +69,7 @@ test('live decode closes camera and registers only after confirmation in another
   assert.equal(a.api.history()[0].stock.model_type,'テスト型番');
   assert.match(a.get('scanNotice').textContent,/登録しました/);
   assert.equal(a.get('scanNotice').scrolled,true);
-  assert.equal(a.get('scanButtonLabel').textContent,'直接スキャン');
+  assert.equal(a.get('scanButtonLabel').textContent,'スキャン');
   assert.equal(a.requests.length,1);
   assert.equal(a.timers.size,0);
   assert.equal(JSON.parse(a.storage.get('kkmt_barcode_history'))[0].code,'P009000');
@@ -135,9 +135,9 @@ test('backgrounding, page exit, Escape, manual entry and interrupted track relea
     assert.equal(a.api.history().length,0,trigger);
   }
 });
-test('photo decoding still registers and makes stock request',async()=>{
+test('album image decoding still registers and makes stock request',async()=>{
   const a=app({decode:async()=>code('P009002')});
-  await a.api.handleFile({size:10}); await flush();
+  a.get('albumInput').handlers.change({target:{files:[{size:10}],value:'selected'}}); await flush();
   assert.equal(a.api.history()[0].code,'P009002');
   assert.equal(a.requests.length,1); assert.equal(a.get('capBtn').disabled,false);
 });
