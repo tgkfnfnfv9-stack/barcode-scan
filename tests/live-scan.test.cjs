@@ -48,12 +48,35 @@ function app({getUserMedia,decode}={}){
   vm.runInContext(source+`\nreadBarcodes=testDecode; render();
     this.api={startScanner,stopScanner,scanCameraFrame,handleFile,addScan,
       session:()=>cameraSession,history:()=>history,
+      showStock:(stock,authenticated)=>{
+        authSession=authenticated?{token:'test-token',expires_at:new Date(Date.now()+60000).toISOString()}:null;
+        history=[{code:'P009000',fmt:'Code128',stock,detailsOpen:true}]; render();
+      },
       setDecoder:fn=>{readBarcodes=fn;},setMedia:fn=>{navigator.mediaDevices.getUserMedia=fn;}};`,context);
   return {api:context.api,get,camera,events,storage,requests,sandbox,
     tick:async()=>{const next=[...timers].find(([,v])=>v.ms===220); assert.ok(next,'next scan scheduled'); timers.delete(next[0]); await next[1].fn(); await flush();},
     timers};
 }
 const code=value=>[{text:value,format:'Code128'}];
+const visibleText=element=>[element.textContent,...element.children.flatMap(visibleText)].join(' ');
+
+test('staff price fields show authenticated values and cached values disappear after logout',()=>{
+  const a=app();
+  const stock={model_type:'テスト型番',price:1800000,current_price:1500000,
+    current_price_label:'入札会2026春',internal_price:1800000,external_price:0,
+    price_memo:'値引き相談',memo:'動作確認済み',event_price:1500000};
+  a.api.showStock(stock,true);
+  const loggedIn=visibleText(a.get('histList').children.at(-1));
+  for(const value of ['現在価格','¥1,500,000','入札会2026春','非公開価格','¥1,800,000','一時価格','¥0','価格メモ','値引き相談','メモ','動作確認済み']){
+    assert.ok(loggedIn.includes(value),value);
+  }
+  a.api.showStock(stock,false);
+  const loggedOut=visibleText(a.get('histList').children.at(-1));
+  assert.match(loggedOut,/社員情報を見るにはログイン/);
+  for(const value of ['¥1,500,000','¥1,800,000','値引き相談','動作確認済み']){
+    assert.ok(!loggedOut.includes(value),value);
+  }
+});
 
 test('live decode closes camera and registers only after confirmation in another frame',async()=>{
   const a=app({decode:async()=>code('P009000')});

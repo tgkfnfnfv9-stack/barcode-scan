@@ -117,10 +117,18 @@
   .row .scanned-at svg{width:14px; height:14px; flex:none;}
   .stock-state{margin-top:10px; padding:10px 11px; border-radius:10px; background:var(--line2); color:var(--muted); font-size:12px; font-weight:700;}
   .stock-state.err{background:#FFF1F0; color:var(--red);}
-  .price-line{display:flex; align-items:baseline; gap:9px; margin-top:12px; padding:11px 12px; border-radius:11px; background:var(--orange-t);}
+  .price-line{display:flex; align-items:baseline; gap:9px; margin-top:12px; padding:11px 12px; border-radius:11px 11px 0 0; background:var(--orange-t);}
   .price-line .label{font-size:12px; font-weight:800; color:var(--orange-d);}
   .price-line .value{font-size:22px; line-height:1; font-weight:900; color:var(--ink);}
-  .price-line .login-note{font-size:12px; font-weight:700; color:var(--muted);}
+  .price-line{flex-wrap:wrap;}
+  .price-line .price-type{width:100%; font-size:11px; font-weight:700; color:var(--orange-d); text-align:right; overflow-wrap:anywhere;}
+  .staff-prices{margin-top:2px; padding:2px 12px 5px; border:1px solid var(--line2); border-radius:0 0 11px 11px;}
+  .staff-field{display:grid; grid-template-columns:88px minmax(0,1fr); gap:8px; padding:5px 0; font-size:12px; line-height:1.5;}
+  .staff-field+.staff-field{border-top:1px solid var(--line2);}
+  .staff-field .label{font-weight:800; color:var(--muted);}
+  .staff-field .value{font-weight:700; color:var(--ink2); white-space:pre-wrap; overflow-wrap:anywhere;}
+  .staff-login{margin-top:12px; padding:11px 12px; border-radius:11px; background:var(--orange-t); font-size:12px; font-weight:700; color:var(--ink2);}
+  .staff-login button{display:block; margin-top:8px; padding:8px 12px; border:0; border-radius:8px; background:var(--orange); color:#fff; font:800 12px var(--sans); cursor:pointer;}
   .row .acts{display:flex; gap:8px; margin-top:12px;}
   .go{flex:1; display:flex; align-items:center; justify-content:center; gap:6px; text-decoration:none;
     font-family:var(--sans); font-weight:800; font-size:14px; padding:12px; border-radius:10px; cursor:pointer; border:none;}
@@ -439,17 +447,39 @@ function render(){
       stockState=document.createElement('div'); stockState.className='stock-state err'; stockState.textContent=item.stockError||'機械情報を取得できませんでした';
     }
 
-    let priceLine=null, detailToggle=null, details=null;
+    let priceLine=null, staffPrices=null, detailToggle=null, details=null;
     if(item.stock){
-      priceLine=document.createElement('div'); priceLine.className='price-line';
-      const priceLabel=document.createElement('span'); priceLabel.className='label'; priceLabel.textContent='金額';
-      const price=formatPrice(item.stock.price);
-      if(price){
-        const priceValue=document.createElement('span'); priceValue.className='value'; priceValue.textContent=price;
+      const isStaff=!!activeAuthToken();
+      if(isStaff){
+        priceLine=document.createElement('div'); priceLine.className='price-line';
+        const priceLabel=document.createElement('span'); priceLabel.className='label'; priceLabel.textContent='現在価格';
+        const priceValue=document.createElement('span'); priceValue.className='value';
+        priceValue.textContent=formatPrice(item.stock.current_price)||'—';
         priceLine.appendChild(priceLabel); priceLine.appendChild(priceValue);
+        if(item.stock.current_price_label){
+          const priceType=document.createElement('span'); priceType.className='price-type';
+          priceType.textContent=String(item.stock.current_price_label);
+          priceLine.appendChild(priceType);
+        }
+        staffPrices=document.createElement('div'); staffPrices.className='staff-prices';
+        const staffFields=[
+          ['非公開価格',formatPrice(item.stock.internal_price)||'—'],
+          ['一時価格',formatPrice(item.stock.external_price)||'—'],
+          ['価格メモ',displayStockValue('price_memo',item.stock.price_memo)],
+          ['メモ',displayStockValue('memo',item.stock.memo)]
+        ];
+        staffFields.forEach(([label,value])=>{
+          const field=document.createElement('div'); field.className='staff-field';
+          const name=document.createElement('span'); name.className='label'; name.textContent=label;
+          const content=document.createElement('span'); content.className='value'; content.textContent=value;
+          field.appendChild(name); field.appendChild(content); staffPrices.appendChild(field);
+        });
       }else{
-        const loginNote=document.createElement('span'); loginNote.className='login-note'; loginNote.textContent='—';
-        priceLine.appendChild(priceLabel); priceLine.appendChild(loginNote);
+        staffPrices=document.createElement('div'); staffPrices.className='staff-login';
+        staffPrices.textContent='社員情報を見るにはログイン';
+        const login=document.createElement('button'); login.type='button'; login.textContent='社員ログイン';
+        login.onclick=()=>{ clearAuthAttempt(); startAutomaticAuth(); };
+        staffPrices.appendChild(login);
       }
 
       details=document.createElement('div'); details.className='stock-details'; details.hidden=!item.detailsOpen;
@@ -460,7 +490,8 @@ function render(){
       fields.forEach(([key,label])=>{
         const detailRow=document.createElement('div'); detailRow.className='detail-row';
         const detailLabel=document.createElement('div'); detailLabel.className='detail-label'; detailLabel.textContent=label;
-        const detailValue=document.createElement('div'); detailValue.className='detail-value'; detailValue.textContent=displayStockValue(key,item.stock[key]);
+        const detailValue=document.createElement('div'); detailValue.className='detail-value';
+        detailValue.textContent=key==='event_price' && !isStaff?'—':displayStockValue(key,item.stock[key]);
         detailRow.appendChild(detailLabel); detailRow.appendChild(detailValue); details.appendChild(detailRow);
       });
       const photoURL=stockPhotoURL(item.stock.head_picture_url);
@@ -485,7 +516,8 @@ function render(){
     acts.appendChild(b1); acts.appendChild(b2);
 
     row.appendChild(top); if(scannedAtText) row.appendChild(scannedAt); if(stockState) row.appendChild(stockState);
-    if(priceLine) row.appendChild(priceLine); row.appendChild(acts); if(detailToggle) row.appendChild(detailToggle); if(details) row.appendChild(details);
+    if(priceLine) row.appendChild(priceLine); if(staffPrices) row.appendChild(staffPrices);
+    row.appendChild(acts); if(detailToggle) row.appendChild(detailToggle); if(details) row.appendChild(details);
     histList.appendChild(row);
   });
 }
