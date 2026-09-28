@@ -127,6 +127,9 @@
   .staff-field+.staff-field{border-top:1px solid var(--line2);}
   .staff-field .label{font-weight:800; color:var(--muted);}
   .staff-field .value{font-weight:700; color:var(--ink2); white-space:pre-wrap; overflow-wrap:anywhere;}
+  .memo-preview{display:block; max-height:4.5em; line-height:1.5; overflow:hidden; white-space:pre-wrap; overflow-wrap:anywhere;}
+  .memo-more{display:block; margin-top:3px; font-size:11px; font-weight:700; color:var(--muted);}
+  .memo-more[hidden],.detail-row[hidden]{display:none;}
   .staff-login{margin-top:12px; padding:11px 12px; border-radius:11px; background:var(--orange-t); font-size:12px; font-weight:700; color:var(--ink2);}
   .staff-login button{display:block; margin-top:8px; padding:8px 12px; border:0; border-radius:8px; background:var(--orange); color:#fff; font:800 12px var(--sans); cursor:pointer;}
   .row .acts{display:flex; gap:8px; margin-top:12px;}
@@ -448,6 +451,7 @@ function render(){
     }
 
     let priceLine=null, staffPrices=null, detailToggle=null, details=null;
+    const memoEntries=[];
     if(item.stock){
       const isStaff=!!activeAuthToken();
       if(isStaff){
@@ -471,7 +475,13 @@ function render(){
         staffFields.forEach(([label,value])=>{
           const field=document.createElement('div'); field.className='staff-field';
           const name=document.createElement('span'); name.className='label'; name.textContent=label;
-          const content=document.createElement('span'); content.className='value'; content.textContent=value;
+          const content=document.createElement('span'); content.className='value';
+          if(label==='価格メモ'||label==='メモ'){
+            const preview=document.createElement('span'); preview.className='memo-preview'; preview.textContent=value;
+            const more=document.createElement('span'); more.className='memo-more'; more.textContent='続きあり'; more.hidden=true;
+            content.appendChild(preview); content.appendChild(more);
+            if(value!=='—') memoEntries.push({label,value,preview,more});
+          }else content.textContent=value;
           field.appendChild(name); field.appendChild(content); staffPrices.appendChild(field);
         });
       }else{
@@ -483,6 +493,13 @@ function render(){
       }
 
       details=document.createElement('div'); details.className='stock-details'; details.hidden=!item.detailsOpen;
+      memoEntries.forEach(entry=>{
+        const fullRow=document.createElement('div'); fullRow.className='detail-row'; fullRow.hidden=true;
+        const label=document.createElement('div'); label.className='detail-label'; label.textContent=entry.label+'（全文）';
+        const value=document.createElement('div'); value.className='detail-value'; value.textContent=entry.value;
+        fullRow.appendChild(label); fullRow.appendChild(value); details.appendChild(fullRow);
+        entry.fullRow=fullRow;
+      });
       const fields=[
         ['name','機械名'], ['maker','メーカー'], ['model_type','型番'], ['year_type','年式'],
         ['detail_spec','仕様'], ['event_name','入札会名'], ['event_price','入札会価格'], ['type','種別']
@@ -519,8 +536,15 @@ function render(){
     if(priceLine) row.appendChild(priceLine); if(staffPrices) row.appendChild(staffPrices);
     row.appendChild(acts); if(detailToggle) row.appendChild(detailToggle); if(details) row.appendChild(details);
     histList.appendChild(row);
+    memoEntries.forEach(({preview,more,fullRow})=>{
+      const overflow=preview.scrollHeight>preview.clientHeight+1;
+      more.hidden=!overflow||!!item.detailsOpen;
+      fullRow.hidden=!overflow;
+    });
   });
 }
+
+window.addEventListener('resize',render);
 
 function addScan(code,fmt){
   // 重複は追加せず先頭へ移動（Q2B）

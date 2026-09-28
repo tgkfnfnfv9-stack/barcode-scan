@@ -14,7 +14,7 @@ function stream(){
   const track={stopped:false,stop(){this.stopped=true;},addEventListener(name,fn){listeners[name]=fn;}};
   return {track,listeners,getTracks:()=>[track],getVideoTracks:()=>[track]};
 }
-function app({getUserMedia,decode}={}){
+function app({getUserMedia,decode,memoOverflow}={}){
   const timers=new Map(), elements=new Map(), events={}, storage=new Map(), requests=[];
   let timerId=0, context;
   class Element{
@@ -24,6 +24,8 @@ function app({getUserMedia,decode}={}){
       this.classList={add(){},remove(){},toggle(){}};
     }
     addEventListener(name,fn){this.handlers[name]=fn;}
+    get scrollHeight(){return this.className==='memo-preview' && memoOverflow?.(this.textContent)?100:54;}
+    get clientHeight(){return 54;}
     appendChild(child){this.children.push(child);}
     setAttribute(){} focus(){this.focused=true;} scrollIntoView(){this.scrolled=true;}
     showModal(){this.open=true;} close(){this.open=false;}
@@ -48,9 +50,9 @@ function app({getUserMedia,decode}={}){
   vm.runInContext(source+`\nreadBarcodes=testDecode; render();
     this.api={startScanner,stopScanner,scanCameraFrame,handleFile,addScan,
       session:()=>cameraSession,history:()=>history,
-      showStock:(stock,authenticated)=>{
+      showStock:(stock,authenticated,detailsOpen=true)=>{
         authSession=authenticated?{token:'test-token',expires_at:new Date(Date.now()+60000).toISOString()}:null;
-        history=[{code:'P009000',fmt:'Code128',stock,detailsOpen:true}]; render();
+        history=[{code:'P009000',fmt:'Code128',stock,detailsOpen}]; render();
       },
       setDecoder:fn=>{readBarcodes=fn;},setMedia:fn=>{navigator.mediaDevices.getUserMedia=fn;}};`,context);
   return {api:context.api,get,camera,events,storage,requests,sandbox,
@@ -59,6 +61,32 @@ function app({getUserMedia,decode}={}){
 }
 const code=value=>[{text:value,format:'Code128'}];
 const visibleText=element=>[element.textContent,...element.children.flatMap(visibleText)].join(' ');
+const descendants=element=>[element,...element.children.flatMap(descendants)];
+
+test('only overflowing memos show a gray continuation and reveal full text in details',()=>{
+  const a=app({memoOverflow:text=>text.length>60});
+  const memo='9/22 引き合い解除\n8/7 引き合いあり\nスピンドルの写真あり\n'.repeat(4);
+  a.api.showStock({price_memo:'短い価格メモ',memo},true,false);
+  let row=a.get('histList').children.at(-1);
+  let markers=descendants(row).filter(node=>node.className==='memo-more');
+  assert.equal(markers.length,2);
+  assert.equal(markers[0].hidden,true);
+  assert.equal(markers[1].hidden,false);
+  assert.equal(markers[1].textContent,'続きあり');
+  const details=descendants(row).find(node=>node.className==='stock-details');
+  assert.equal(details.hidden,true);
+  const fullRows=details.children.filter(node=>visibleText(node).includes('（全文）'));
+  assert.equal(fullRows.length,2);
+  assert.equal(fullRows[0].hidden,true);
+  assert.equal(fullRows[1].hidden,false);
+  descendants(row).find(node=>node.className==='detail-toggle').onclick();
+  row=a.get('histList').children.at(-1);
+  markers=descendants(row).filter(node=>node.className==='memo-more');
+  assert.equal(markers[1].hidden,true);
+  const expanded=descendants(row).find(node=>node.className==='stock-details');
+  assert.equal(expanded.hidden,false);
+  assert.ok(visibleText(expanded).includes(memo));
+});
 
 test('staff price fields show authenticated values and cached values disappear after logout',()=>{
   const a=app();
