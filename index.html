@@ -643,6 +643,11 @@ async function fetchWithTimeout(url,options){
     // ヘッダー到着後のJSON本文の受信にも期限を設ける。
     const request=(async()=>{
       const response=await fetch(url,{...options,signal:controller.signal});
+      // 401は本文を待たず返し、期限切れの社員情報をすぐ非表示にする。
+      if(response.status===401){
+        response.body?.cancel().catch(()=>{});
+        return {ok:false,status:401,json:async()=>({})};
+      }
       let data={};
       try{data=await response.json();}catch(error){if(response.ok || controller.signal.aborted) throw error;}
       return {ok:response.ok,status:response.status,json:async()=>data};
