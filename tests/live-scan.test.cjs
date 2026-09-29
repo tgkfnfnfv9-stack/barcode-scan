@@ -418,3 +418,13 @@ test('malformed cached field types cannot crash initialization',()=>{
   assert.equal(a.api.history()[0].stock.memo,undefined);
   assert.match(visibleText(a.get('histList')),/社員情報を見るにはログイン/);
 });
+
+test('401 headers invalidate login without waiting for a stalled error body',async()=>{
+  const errorBody=deferred(),publicReply=deferred();let calls=0;
+  const a=app({fetch:()=>++calls===1?Promise.resolve({ok:false,status:401,json:()=>errorBody.promise}):publicReply.promise});
+  a.api.showStock({memo:'SECRET'},true);
+  const loading=a.api.loadStock(a.api.history()[0]);await flush();
+  assert.equal(a.api.auth(),null);assert.equal(calls,2);
+  assert.doesNotMatch(visibleText(a.get('histList')),/SECRET/);
+  publicReply.resolve(response({name:'public'}));await loading;
+});
