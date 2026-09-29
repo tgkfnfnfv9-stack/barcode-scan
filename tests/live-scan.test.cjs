@@ -98,7 +98,8 @@ test('only overflowing memos show a gray continuation and reveal full text in de
   descendants(row).find(node=>node.className==='detail-toggle').onclick();
   row=a.get('histList').children.at(-1);
   markers=descendants(row).filter(node=>node.className==='memo-more');
-  assert.equal(markers[1].hidden,true);
+  assert.equal(markers[1].hidden,false);
+  assert.equal(markers[1].style.visibility,'hidden');
   const expanded=descendants(row).find(node=>node.className==='stock-details');
   assert.equal(expanded.hidden,false);
   assert.ok(visibleText(expanded).includes(memo));
