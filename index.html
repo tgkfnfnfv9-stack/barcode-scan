@@ -438,7 +438,9 @@ const renderedRows=new Map();
 function updateMemoOverflow(record){
   record.memoEntries.forEach(({preview,more,fullRow})=>{
     const overflow=preview.scrollHeight>preview.clientHeight+1;
-    more.hidden=!overflow||!!record.item.detailsOpen;
+    more.hidden=!overflow;
+    // 全文を開いてもプレビューの高さを変えず、開閉ボタンを同じ位置に保つ。
+    more.style.visibility=record.item.detailsOpen?'hidden':'';
     fullRow.hidden=!overflow;
   });
 }
