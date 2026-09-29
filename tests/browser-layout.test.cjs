@@ -37,13 +37,16 @@ for(const [name,type] of Object.entries({chromium,webkit})){
       const row=page.locator('.row').nth(7),toggle=row.locator('.detail-toggle');
       await toggle.scrollIntoViewIfNeeded();
       await page.evaluate(()=>{document.querySelectorAll('.row')[7].dataset.identity='preserved';});
+      await toggle.focus();
       const before=await toggle.boundingBox();const y=await page.evaluate(()=>window.scrollY);
       await toggle.click();
       await page.waitForFunction(()=>!document.querySelectorAll('.stock-details')[7].hidden);
       assert.equal(await row.getAttribute('data-identity'),'preserved');
-      assert.ok(Math.abs((await toggle.boundingBox()).y-before.y)<2,'toggle stays in the same position');
+      const after=await toggle.boundingBox();
+      assert.ok(Math.abs(after.y-before.y)<2,`toggle stays in the same position: ${before.y} -> ${after.y}`);
       assert.ok(Math.abs((await page.evaluate(()=>window.scrollY))-y)<2,'page does not jump to the first card');
       assert.equal(await toggle.getAttribute('aria-expanded'),'true');
+      assert.equal(await toggle.evaluate(el=>el===document.activeElement),true);
       assert.equal(await row.locator('.memo-more:visible').count(),0);
       assert.ok((await row.locator('.stock-details').innerText()).includes(memo.trim()));
       await toggle.click();
