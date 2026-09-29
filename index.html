@@ -314,8 +314,35 @@ const AUTH_STORE_KEY='kkmt_barcode_auth';
 const AUTH_ATTEMPT_KEY='kkmt_barcode_auth_attempted_at';
 const AUTH_PENDING_CODE_KEY='kkmt_barcode_auth_pending_code';
 const AUTH_RETRY_DELAY=5*60*1000;
-function loadHistory(){ try{ const v=localStorage.getItem(STORE_KEY); const a=v?JSON.parse(v):[]; return Array.isArray(a)?a:[]; }catch(e){ return []; } }
-function saveHistory(){ try{ localStorage.setItem(STORE_KEY, JSON.stringify(history)); }catch(e){} }
+let authExpiryTimer=null;
+function normalizeCode(value){ return String(value??'').normalize('NFKC').toUpperCase().replace(/\s+/g,''); }
+function normalizeStock(value){
+  if(!value || typeof value!=='object' || Array.isArray(value)) return null;
+  return Object.fromEntries(Object.entries(value).filter(([,v])=>v===null || ['string','number','boolean'].includes(typeof v)));
+}
+function loadHistory(){
+  try{
+    const values=JSON.parse(localStorage.getItem(STORE_KEY)||'[]');
+    if(!Array.isArray(values)) return [];
+    const seen=new Set();
+    return values.flatMap(item=>{
+      if(!item || typeof item!=='object' || typeof item.code!=='string') return [];
+      const code=normalizeCode(item.code);
+      if(!MACHINE_CODE_RE.test(code) || seen.has(code)) return [];
+      seen.add(code);
+      return [{code,fmt:typeof item.fmt==='string'?item.fmt:'',scannedAt:typeof item.scannedAt==='string'?item.scannedAt:undefined,
+        stock:normalizeStock(item.stock),
+        detailsOpen:!!item.detailsOpen,stockLoading:false,stockError:''}];
+    });
+  }catch(e){ return []; }
+}
+function saveHistory(){
+  try{
+    // 通信中の状態は保存しない。次回起動時は情報を再取得する。
+    const saved=history.map(({code,fmt,scannedAt,stock,detailsOpen})=>({code,fmt,scannedAt,stock,detailsOpen}));
+    localStorage.setItem(STORE_KEY,JSON.stringify(saved));
+  }catch(e){}
+}
 let history=loadHistory();   // 最新が先頭
 
 function loadAuth(){
@@ -327,7 +354,7 @@ function saveAuth(){
 let authSession=loadAuth();
 
 function activeAuthToken(){
-  if(!authSession || !authSession.token || !authSession.expires_at){ authSession=null; saveAuth(); return ''; }
+  if(!authSession || typeof authSession.token!=='string' || !authSession.token || typeof authSession.expires_at!=='string'){ authSession=null; saveAuth(); return ''; }
   const expiresAt=Date.parse(authSession.expires_at);
   if(!Number.isFinite(expiresAt) || expiresAt<=Date.now()){ authSession=null; saveAuth(); return ''; }
   return authSession.token;
@@ -337,6 +364,7 @@ function clearAuthAttempt(){
 }
 function startAutomaticAuth(){
   if(activeAuthToken()) return false;
+  if(navigator.onLine===false) return false;
   let attemptedAt=0;
   try{ attemptedAt=Number(sessionStorage.getItem(AUTH_ATTEMPT_KEY))||0; }catch(e){}
   if(attemptedAt && Date.now()-attemptedAt<AUTH_RETRY_DELAY) return false;
@@ -358,14 +386,14 @@ async function exchangeAuthCode(){
   currentURL.searchParams.delete('auth_code');
   window.history.replaceState(null,'',currentURL.pathname+currentURL.search+currentURL.hash);
   setStatus('社員認証中…','busy');
-  const response=await fetch(AUTH_EXCHANGE_URL,{
+  const response=await fetchWithTimeout(AUTH_EXCHANGE_URL,{
     method:'POST', mode:'cors', credentials:'omit', cache:'no-store',
     headers:{Accept:'application/json','Content-Type':'application/json'}, body:JSON.stringify({code})
   });
   let data={};
   try{ data=await response.json(); }catch(e){}
   if(!response.ok) throw new Error(data.error||('認証API '+response.status));
-  if(!data.token || !data.expires_at) throw new Error('認証情報の形式が不正です');
+  if(!data || typeof data.token!=='string' || !data.token || typeof data.expires_at!=='string' || !Number.isFinite(Date.parse(data.expires_at)) || Date.parse(data.expires_at)<=Date.now()) throw new Error('認証情報の形式が不正です');
   authSession={token:data.token,expires_at:data.expires_at};
   saveAuth(); clearAuthAttempt(); setStatus('社員価格ログイン完了','ready');
 }
@@ -387,11 +415,11 @@ function displayStockValue(key,value){
 }
 function stockPhotoURL(value){
   if(!value) return '';
-  try{ return new URL(value,'https://www.kkmt.co.jp').href; }catch(e){ return ''; }
+  try{ const url=new URL(value,'https://www.kkmt.co.jp'); return url.protocol==='https:'?url.href:''; }catch(e){ return ''; }
 }
 
 /* 内蔵ブラウザではなく外部ブラウザ(Safari/Chrome)で開く */
-function openExternal(url){ const w=window.open(url,'_blank'); if(!w){ location.href=url; } }
+function openExternal(url){ const w=window.open(url,'_blank'); if(w){w.opener=null;}else{location.href=url;} }
 
 function svgArrow(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'; }
 function svgX(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>'; }
@@ -406,14 +434,41 @@ function formatScannedAt(value){
   return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+const renderedRows=new Map();
+function updateMemoOverflow(record){
+  record.memoEntries.forEach(({preview,more,fullRow})=>{
+    const overflow=preview.scrollHeight>preview.clientHeight+1;
+    more.hidden=!overflow;
+    // 全文を開いてもプレビューの高さを変えず、開閉ボタンを同じ位置に保つ。
+    more.style.visibility=record.item.detailsOpen?'hidden':'';
+    fullRow.hidden=!overflow;
+  });
+}
+function scheduleAuthExpiry(){
+  clearTimeout(authExpiryTimer);
+  authExpiryTimer=null;
+  if(activeAuthToken()) authExpiryTimer=setTimeout(()=>render(),Math.min(2147483647,Math.max(1,Date.parse(authSession.expires_at)-Date.now())));
+}
 function render(){
   updateScanButton();
   histCount.textContent='('+history.length+'件)';
   resetAllBtn.style.display = history.length ? '' : 'none';
   copyAllBtn.style.display  = history.length ? '' : 'none';
   emptyState.style.display  = history.length ? 'none' : '';
-  histList.textContent='';
+  const isStaff=!!activeAuthToken();
+  const anchor=history.map(item=>renderedRows.get(item.code)).find(record=>record&&record.row.getBoundingClientRect().bottom>0);
+  const anchorTop=anchor?.row.getBoundingClientRect().top;
+  const codes=new Set(history.map(item=>item.code));
+  for(const [code,record] of renderedRows){
+    if(!codes.has(code)){record.row.remove(); renderedRows.delete(code);}
+  }
   history.forEach(item=>{
+    const previous=renderedRows.get(item.code);
+    const latest=item.code===latestCode;
+    if(previous && previous.item===item && previous.stock===item.stock && previous.loading===item.stockLoading && previous.error===item.stockError && previous.isStaff===isStaff && previous.latest===latest){
+      updateMemoOverflow(previous);
+      return;
+    }
     const row=document.createElement('div'); row.className='row';
     if(item.code===latestCode){
       row.classList.add('latest');
@@ -453,7 +508,6 @@ function render(){
     let priceLine=null, staffPrices=null, detailToggle=null, details=null;
     const memoEntries=[];
     if(item.stock){
-      const isStaff=!!activeAuthToken();
       if(isStaff){
         priceLine=document.createElement('div'); priceLine.className='price-line';
         const priceLabel=document.createElement('span'); priceLabel.className='label'; priceLabel.textContent='現在価格';
@@ -520,7 +574,15 @@ function render(){
       detailToggle=document.createElement('button'); detailToggle.className='detail-toggle';
       detailToggle.textContent=item.detailsOpen?'▲ 詳細を閉じる':'▼ 詳細を見る';
       detailToggle.setAttribute('aria-expanded',item.detailsOpen?'true':'false');
-      detailToggle.onclick=()=>{ item.detailsOpen=!item.detailsOpen; render(); };
+      detailToggle.onclick=()=>{
+        // 認証失効時は先に社員情報を消す。通常の開閉では履歴を作り直さない。
+        if(isStaff!==!!activeAuthToken()){render(); return;}
+        item.detailsOpen=!item.detailsOpen;
+        details.hidden=!item.detailsOpen;
+        detailToggle.textContent=item.detailsOpen?'▲ 詳細を閉じる':'▼ 詳細を見る';
+        detailToggle.setAttribute('aria-expanded',item.detailsOpen?'true':'false');
+        updateMemoOverflow(renderedRows.get(item.code));
+      };
     }
 
     const acts=document.createElement('div'); acts.className='acts';
@@ -535,18 +597,28 @@ function render(){
     row.appendChild(top); if(scannedAtText) row.appendChild(scannedAt); if(stockState) row.appendChild(stockState);
     if(priceLine) row.appendChild(priceLine); if(staffPrices) row.appendChild(staffPrices);
     row.appendChild(acts); if(detailToggle) row.appendChild(detailToggle); if(details) row.appendChild(details);
-    histList.appendChild(row);
-    memoEntries.forEach(({preview,more,fullRow})=>{
-      const overflow=preview.scrollHeight>preview.clientHeight+1;
-      more.hidden=!overflow||!!item.detailsOpen;
-      fullRow.hidden=!overflow;
-    });
+    const record={row,item,memoEntries,stock:item.stock,loading:item.stockLoading,error:item.stockError,isStaff,latest};
+    if(previous){previous.row.replaceWith(row); row.style.animation='none';}
+    else histList.appendChild(row);
+    renderedRows.set(item.code,record);
+    updateMemoOverflow(record);
   });
+  history.forEach((item,index)=>{
+    const row=renderedRows.get(item.code).row;
+    if(histList.children[index]!==row) histList.insertBefore(row,histList.children[index]||null);
+  });
+  if(anchor && renderedRows.has(anchor.item.code)){
+    const newTop=renderedRows.get(anchor.item.code).row.getBoundingClientRect().top;
+    if(newTop!==anchorTop) window.scrollBy(0,newTop-anchorTop);
+  }
+  scheduleAuthExpiry();
 }
 
 window.addEventListener('resize',render);
 
 function addScan(code,fmt){
+  code=normalizeCode(code);
+  if(!MACHINE_CODE_RE.test(code)) return;
   // 重複は追加せず先頭へ移動（Q2B）
   const previous=history.find(x=>x.code===code);
   latestCode=code;
@@ -560,40 +632,79 @@ function addScan(code,fmt){
   loadStock(item);
 }
 
+async function fetchWithTimeout(url,options){
+  const controller=new AbortController();
+  let timer;
+  const timeout=new Promise((resolve,reject)=>{
+    timer=setTimeout(()=>{
+      controller.abort();
+      reject(new Error('通信がタイムアウトしました。再読み込みするか、番号を再登録してください'));
+    },15000);
+  });
+  try{
+    // ヘッダー到着後のJSON本文の受信にも期限を設ける。
+    const request=(async()=>{
+      const response=await fetch(url,{...options,signal:controller.signal});
+      // 401は本文を待たず返し、期限切れの社員情報をすぐ非表示にする。
+      if(response.status===401){
+        response.body?.cancel().catch(()=>{});
+        return {ok:false,status:401,json:async()=>({})};
+      }
+      let data={};
+      try{data=await response.json();}catch(error){if(response.ok || controller.signal.aborted) throw error;}
+      return {ok:response.ok,status:response.status,json:async()=>data};
+    })();
+    return await Promise.race([request,timeout]);
+  }
+  catch(error){
+    if(controller.signal.aborted) throw new Error('通信がタイムアウトしました。再読み込みするか、番号を再登録してください');
+    throw error;
+  }finally{clearTimeout(timer);}
+}
 function requestStock(code,token){
   const headers={Accept:'application/json'};
   if(token) headers.Authorization='Bearer '+token;
-  return fetch(buildURL(STOCK_API_URL,code),{
+  return fetchWithTimeout(buildURL(STOCK_API_URL,code),{
     method:'GET', mode:'cors', credentials:'omit', cache:'no-store', headers
   });
 }
 async function fetchStock(code){
-  let token=activeAuthToken();
-  let response=await requestStock(code,token);
-  if(response.status===401 && token){
-    authSession=null; saveAuth(); clearAuthAttempt(); savePendingAuthCode(code);
-    setStatus('社員価格ログインの期限が切れました','err');
-    token=''; response=await requestStock(code,token);
-    authRestartNeeded=true;
+  for(let attempt=0;attempt<3;attempt++){
+    const token=activeAuthToken();
+    const response=await requestStock(code,token);
+    // 古い認証の応答で、新しいログインを消したり古い価格を戻したりしない。
+    if(token!==activeAuthToken()){render(); continue;}
+    if(response.status===401 && token){
+      authSession=null; saveAuth(); clearAuthAttempt(); savePendingAuthCode(code);
+      render();
+      setStatus('社員価格ログインの期限が切れました','err');
+      authRestartNeeded=true;
+      continue;
+    }
+    let stock={};
+    try{stock=await response.json();}catch(error){if(response.ok) throw error;}
+    if(token!==activeAuthToken()){render(); continue;}
+    if(!response.ok) throw new Error(stock?.error||('API '+response.status));
+    const normalized=normalizeStock(stock);
+    if(!normalized) throw new Error('機械情報の形式が不正です');
+    return normalized;
   }
-  if(!response.ok){
-    let data={};
-    try{ data=await response.json(); }catch(e){}
-    throw new Error(data.error||('API '+response.status));
-  }
-  return response.json();
+  throw new Error('認証情報が更新されました。番号を再登録してください');
 }
 
+const stockRequests=new WeakMap();
 async function loadStock(item){
+  const request={};
+  stockRequests.set(item,request);
   try{
     const stock=await fetchStock(item.code);
-    if(!history.includes(item)) return;
+    if(!history.includes(item) || stockRequests.get(item)!==request) return;
     item.stock=stock; item.stockError='';
   }catch(e){
-    if(!history.includes(item)) return;
+    if(!history.includes(item) || stockRequests.get(item)!==request) return;
     item.stockError=(e&&e.message)||'API error';
   }finally{
-    if(history.includes(item)){ item.stockLoading=false; saveHistory(); render(); }
+    if(history.includes(item) && stockRequests.get(item)===request){ item.stockLoading=false; saveHistory(); render(); }
     if(authRestartNeeded){ authRestartNeeded=false; setTimeout(startAutomaticAuth,0); }
   }
 }
@@ -602,21 +713,19 @@ async function initLib(){
   setStatus('準備中…','busy');
   const jsText=new TextDecoder('utf-8').decode(b64ToBytes('zxjs'));
   const blobUrl=URL.createObjectURL(new Blob([jsText],{type:'text/javascript'}));
-  const mod=await import(blobUrl);
-  const wasmBytes=b64ToBytes('zxwasm');
-  await mod.prepareZXingModule({
-    overrides:{ instantiateWasm:(imp,cb)=>{ WebAssembly.instantiate(wasmBytes,imp).then(r=>cb(r.instance,r.module)); return {}; }},
-    fireImmediately:true,
-  });
-  readBarcodes=mod.readBarcodes;
-  URL.revokeObjectURL(blobUrl);
+  try{
+    const mod=await import(blobUrl);
+    const wasmBytes=b64ToBytes('zxwasm');
+    await mod.prepareZXingModule({overrides:{wasmBinary:wasmBytes},fireImmediately:true});
+    readBarcodes=mod.readBarcodes;
+  }finally{URL.revokeObjectURL(blobUrl);}
   updateScanButton();
   setStatus('準備完了','ready');
 }
 
 function pickMachineBarcode(results){
   for(const result of results||[]){
-    const code=String(result&&result.text||'').trim().toUpperCase().replace(/\s+/g,'');
+    const code=normalizeCode(result&&result.text);
     if(MACHINE_CODE_RE.test(code)) return {text:code,format:result.format||''};
   }
   return null;
@@ -815,8 +924,16 @@ el('closeScanner').addEventListener('click',()=>stopScanner());
 scanner.addEventListener('cancel',event=>{event.preventDefault(); stopScanner();});
 scanner.addEventListener('close',()=>{if(!scanner.open && cameraSession) stopScanner();});
 el('scannerManual').addEventListener('click',()=>{stopScanner(false); el('manualInput').focus();});
-document.addEventListener('visibilitychange',()=>{if(document.hidden) stopScanner(false);});
+document.addEventListener('visibilitychange',()=>{if(document.hidden) stopScanner(false); else render();});
 window.addEventListener('pagehide',()=>stopScanner(false));
+window.addEventListener('pageshow',()=>render());
+window.addEventListener('storage',event=>{
+  if(event.key===AUTH_STORE_KEY || event.key===null){
+    const previous=authSession?.token;
+    authSession=loadAuth(); render();
+    if(activeAuthToken() && authSession.token!==previous) refreshHistory();
+  }
+});
 el('albumBtn').addEventListener('click',()=>el('albumInput').click());
 el('albumInput').addEventListener('change',e=>{const f=e.target.files[0]; e.target.value=''; handleFile(f);});
 
@@ -825,11 +942,12 @@ resetAllBtn.addEventListener('click',()=>{ history=[]; latestCode=''; el('scanNo
 /* 直接入力して登録（手入力） */
 const manualInput=el('manualInput'), manualAddBtn=el('manualAddBtn');
 function submitManual(){
-  const code=manualInput.value.trim();
+  const code=normalizeCode(manualInput.value);
   if(!code){ setStatus('バーコード番号を入力してください','err'); manualInput.focus(); return; }
+  if(!MACHINE_CODE_RE.test(code)){ setStatus('機械番号は英字1文字＋数字6桁で入力してください（例：P009000）','err'); manualInput.focus(); return; }
   addScan(code,'手入力');
   setStatus('登録しました：'+code,'ready');
-  manualInput.value=''; manualInput.focus();
+  manualInput.value='';
 }
 manualAddBtn.addEventListener('click',submitManual);
 manualInput.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); submitManual(); } });
@@ -840,13 +958,15 @@ function copyText(text){
     return navigator.clipboard.writeText(text);
   }
   return new Promise((res,rej)=>{
+    const focused=document.activeElement;
+    const ta=document.createElement('textarea');
     try{
-      const ta=document.createElement('textarea');
-      ta.value=text; ta.setAttribute('readonly',''); ta.style.position='absolute'; ta.style.left='-9999px';
+      ta.value=text; ta.setAttribute('readonly',''); ta.style.position='fixed'; ta.style.left='-9999px';
       document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0,text.length);
-      const ok=document.execCommand('copy'); document.body.removeChild(ta);
+      const ok=document.execCommand('copy');
       ok?res():rej(new Error('copy failed'));
     }catch(e){ rej(e); }
+    finally{ta.remove(); focused?.focus({preventScroll:true});}
   });
 }
 copyAllBtn.addEventListener('click',()=>{
@@ -861,19 +981,33 @@ copyAllBtn.addEventListener('click',()=>{
   }).catch(()=>{ setStatus('コピーできませんでした。長押しで選択してください','err'); });
 });
 
-render();
-(async()=>{
+async function refreshHistory(){
+  const pending=history.slice();
+  async function worker(){
+    while(pending.length){
+      const item=pending.shift();
+      if(!history.includes(item)) continue;
+      item.stockLoading=true; item.stockError=''; render();
+      await loadStock(item);
+    }
+  }
+  await Promise.all(Array.from({length:Math.min(3,pending.length)},worker));
+}
+async function initialize(){
   let authError='';
   try{ await exchangeAuthCode(); }catch(e){ clearAuthAttempt(); authError='社員認証に失敗：'+((e&&e.message)||e); }
+  render();
   if(!activeAuthToken() && !authError && startAutomaticAuth()) return;
-  const pendingCode=activeAuthToken()?takePendingAuthCode():'';
-  if(pendingCode){
-    const pendingItem=history.find(item=>item.code===pendingCode);
-    if(pendingItem){ pendingItem.stockLoading=true; pendingItem.stockError=''; render(); await loadStock(pendingItem); }
-  }
+  if(activeAuthToken()) takePendingAuthCode();
+  // 情報取得を待たずスキャナーを準備し、保存済み情報も最新に更新する。
+  const refresh=refreshHistory();
   try{ await initLib(); }catch(e){ setStatus('初期化に失敗：'+((e&&e.message)||e),'err'); }
   if(authError) setStatus(authError,'err');
-})();
+  await refresh;
+}
+
+render();
+initialize();
 </script>
 </body>
 </html>

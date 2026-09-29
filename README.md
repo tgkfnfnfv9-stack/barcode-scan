@@ -75,5 +75,7 @@
 ### 開発時の確認
 
 Node.js 18以降で `node --test tests/live-scan.test.cjs` を実行する。
-カメラとDOMを模擬し、自動登録、重複防止、終了後の非同期結果の無視、権限エラー、画面離脱時の停止、写真読み取りを確認する。
+カメラとDOMを模擬し、自動登録、重複防止、詳細開閉の位置保持、メモの省略、認証期限切れ・別タブのログアウト、履歴復元、手入力、APIタイムアウト、古い非同期結果の無視、権限エラー、画面離脱時の停止、写真読み取りを確認する。
+
+GitHub Actions では Chromium と WebKit でも、履歴の下のカードの詳細開閉、画面幅変更時の3行メモ、認証期限切れをテストデータで確認する（実際の社員APIには接続しない）。ローカルで同じ確認を行う場合は `npm install --no-save --package-lock=false playwright@1.62.1`、`npx playwright install --with-deps chromium webkit`、`node --test tests/browser-layout.test.cjs` を実行する。
 端末ごとのピント・解像度・読み取り速度と画面表示は、iPhoneなどの実機でも確認する。
