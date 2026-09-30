@@ -62,12 +62,13 @@ function app({getUserMedia,decode,memoOverflow,fetch:fetchMock,initialStorage={}
     this.api={startScanner,stopScanner,scanCameraFrame,handleFile,addScan,render,initialize,refreshHistory,loadStock,fetchStock,submitManual,copyText,stockPhotoURL,
       session:()=>cameraSession,history:()=>history,
       setHistory:items=>{history=items; render();},
-      setAuth:auth=>{authSession=auth;render();},
+      setAuth:auth=>{authSession=auth;saveAuth();render();},
       auth:()=>authSession,
       advance:ms=>{testAdvance(ms);},
       setInit:fn=>{initLib=fn;},
       showStock:(stock,authenticated,detailsOpen=true)=>{
         authSession=authenticated?{token:'test-token',expires_at:new Date(Date.now()+60000).toISOString()}:null;
+        saveAuth();
         history=[{code:'P009000',fmt:'Code128',stock,detailsOpen}]; render();
       },
       setDecoder:fn=>{readBarcodes=fn;},setMedia:fn=>{navigator.mediaDevices.getUserMedia=fn;}};`,context);
@@ -428,4 +429,121 @@ test('401 headers invalidate login without waiting for a stalled error body',asy
   assert.equal(a.api.auth(),null);assert.equal(calls,2);
   assert.doesNotMatch(visibleText(a.get('histList')),/SECRET/);
   publicReply.resolve(response({name:'public'}));await loading;
+});
+
+test('reset and page exit cancel pending album results without reviving history',async()=>{
+  for(const trigger of ['reset','pagehide','visibilitychange']){
+    const pending=deferred(),a=app({decode:()=>pending.promise});
+    const parsing=a.api.handleFile({size:10});await flush();
+    assert.equal(a.get('albumBtn').disabled,true);
+    if(trigger==='reset')a.get('resetAllBtn').handlers.click();
+    else if(trigger==='visibilitychange'){a.sandbox.document.hidden=true;a.events.visibilitychange();}
+    else a.events.pagehide();
+    pending.resolve(code('P009002'));await parsing;await flush();
+    assert.equal(a.api.history().length,0,trigger);
+    assert.equal(a.requests.length,0,trigger);
+    assert.equal(a.get('albumBtn').disabled,false,trigger);
+  }
+});
+
+test('cancelled album work cannot clear a newer album session busy state',async()=>{
+  const first=deferred(),second=deferred();let calls=0;
+  const a=app({decode:()=>++calls===1?first.promise:second.promise});
+  const old=a.api.handleFile({size:10});await flush();a.get('resetAllBtn').handlers.click();
+  const next=a.api.handleFile({size:10});first.resolve(code('P009000'));await old;await flush();
+  assert.equal(a.get('albumBtn').disabled,true);
+  assert.equal(a.api.history().length,0);
+  second.resolve(code('P009001'));await next;await flush();
+  assert.equal(a.api.history()[0].code,'P009001');
+  assert.equal(a.get('albumBtn').disabled,false);
+});
+
+test('copy feedback reports the snapshot count even when history resets while copying',async()=>{
+  const pending=deferred(),a=app();let copied;
+  a.sandbox.navigator.clipboard={writeText:text=>{copied=text;return pending.promise;}};
+  a.api.setHistory([{code:'P009000'},{code:'P009001'}]);
+  a.get('copyAllBtn').handlers.click();a.get('resetAllBtn').handlers.click();
+  pending.resolve();await flush();
+  assert.equal(copied,'P009000\nP009001');
+  assert.match(a.get('status').textContent,/コピーしました（2件）/);
+});
+
+test('deleting a just-registered card clears its obsolete success notice',async()=>{
+  const a=app();a.api.addScan('P009000','手入力');await flush();
+  assert.equal(a.get('scanNotice').hidden,false);
+  descendants(a.get('histList')).find(n=>n.className==='del').onclick();
+  assert.equal(a.get('scanNotice').hidden,true);
+  assert.equal(a.api.history().length,0);
+});
+
+test('broken photo requests are replaced by an explicit fallback',()=>{
+  const a=app();a.api.setHistory([{code:'P009000',stock:{name:'test',head_picture_url:'/photos/missing.jpg'}}]);
+  const image=descendants(a.get('histList')).find(n=>n.className==='stock-photo');assert.ok(image);
+  image.onerror();
+  assert.equal(descendants(a.get('histList')).some(n=>n.className==='stock-photo'),false);
+  assert.ok(descendants(a.get('histList')).some(n=>/写真なし|写真を表示できません/.test(n.textContent)));
+});
+
+test('resuming an expired tab preserves a newer shared login instead of deleting it',()=>{
+  for(const event of ['pageshow','visibilitychange']){
+    const a=app();a.api.setAuth(auth('old',1000));a.api.setHistory([item('P009000',{memo:'SECRET'})]);
+    const newer=auth('new',120000);a.storage.set('kkmt_barcode_auth',JSON.stringify(newer));a.api.advance(2000);
+    a.events[event]();
+    assert.equal(a.api.auth().token,'new',event);
+    assert.equal(JSON.parse(a.storage.get('kkmt_barcode_auth')).token,'new',event);
+    assert.match(visibleText(a.get('histList')),/SECRET/);
+  }
+});
+
+test('resuming a logged-out tab masks its cached fields even if the storage event was missed',()=>{
+  const a=app();a.api.showStock({memo:'SECRET'},true);
+  a.storage.delete('kkmt_barcode_auth');a.events.pageshow();
+  assert.equal(a.api.auth(),null);assert.doesNotMatch(visibleText(a.get('histList')),/SECRET/);
+});
+
+test('malformed auth token objects and invalid JSON cannot keep a stale login or recurse',()=>{
+  const a=app();a.api.showStock({memo:'SECRET'},true);
+  a.storage.set('kkmt_barcode_auth',JSON.stringify({token:{toString:1},expires_at:auth().expires_at}));
+  a.events.pageshow();assert.equal(a.api.auth(),null);assert.doesNotMatch(visibleText(a.get('histList')),/SECRET/);
+  a.api.setAuth(auth());a.storage.set('kkmt_barcode_auth','malformed');a.events.pageshow();assert.equal(a.api.auth(),null);
+});
+
+test('quota errors retain newly exchanged in-memory login and still honor later shared changes',async()=>{
+  const old=auth('old-saved');
+  const a=app({href:'https://example.test/?auth_code=fresh',initialStorage:{kkmt_barcode_auth:JSON.stringify(old)},fetch:async()=>response(auth('fresh-login'))});
+  a.api.setInit(async()=>{});a.sandbox.localStorage.setItem=()=>{throw new Error('QuotaExceededError');};
+  await a.api.initialize();assert.equal(a.api.auth().token,'fresh-login');assert.equal(a.sandbox.redirect,undefined);
+  a.events.pageshow();assert.equal(a.api.auth().token,'fresh-login');
+  a.storage.set('kkmt_barcode_auth',JSON.stringify(auth('other-tab')));a.events.pageshow();assert.equal(a.api.auth().token,'other-tab');
+  a.storage.delete('kkmt_barcode_auth');a.events.pageshow();assert.equal(a.api.auth(),null);
+});
+
+
+test('cancelled photo work leaves a ready status when returning to the page',async()=>{
+  const pending=deferred(),a=app({decode:()=>pending.promise});
+  const work=a.api.handleFile({size:10});await flush();
+  a.sandbox.document.hidden=true;a.events.visibilitychange();
+  a.sandbox.document.hidden=false;a.events.visibilitychange();
+  pending.resolve(code('P009000'));await work;
+  assert.equal(a.get('status').textContent,'写真解析を中止しました');
+  assert.equal(a.get('led').className,'led ready');
+  assert.equal(a.api.history().length,0);
+});
+
+test('recovered storage adopts a newer valid shared login before expiring temporary memory auth',()=>{
+  const a=app();const get=a.sandbox.localStorage.getItem,set=a.sandbox.localStorage.setItem;
+  a.sandbox.localStorage.getItem=()=>{throw new Error('SecurityError');};
+  a.sandbox.localStorage.setItem=()=>{throw new Error('SecurityError');};
+  a.api.setAuth(auth('temporary',1000));
+  a.sandbox.localStorage.getItem=get;a.sandbox.localStorage.setItem=set;
+  a.storage.set('kkmt_barcode_auth',JSON.stringify(auth('new-shared',120000)));a.api.advance(2000);a.events.pageshow();
+  assert.equal(a.api.auth().token,'new-shared');assert.equal(JSON.parse(a.storage.get('kkmt_barcode_auth')).token,'new-shared');
+});
+
+test('recovered empty storage persists the valid temporary login instead of losing it',()=>{
+  const a=app();const get=a.sandbox.localStorage.getItem,set=a.sandbox.localStorage.setItem;
+  a.sandbox.localStorage.getItem=()=>{throw new Error('SecurityError');};
+  a.sandbox.localStorage.setItem=()=>{throw new Error('SecurityError');};a.api.setAuth(auth('temporary'));
+  a.sandbox.localStorage.getItem=get;a.sandbox.localStorage.setItem=set;a.events.pageshow();
+  assert.equal(a.api.auth().token,'temporary');assert.equal(JSON.parse(a.storage.get('kkmt_barcode_auth')).token,'temporary');
 });

@@ -1,7 +1,7 @@
 # 会社バーコードスキャン｜株式会社小林機械
 
 機械の銘板バーコードを iPhone で読み取り、社内ページ（機械在庫・在庫板）へ誘導する現場用ツールです。
-読み取りエンジンは端末内で完結（オフライン動作）、単一の `index.html` だけで動きます。
+読み取りエンジンは端末内で完結（オフライン動作）、単一の `index.html` だけで動きます。機械情報・社員認証の取得にはネット接続が必要です。
 
 **公開URL：** https://tgkfnfnfv9-stack.github.io/barcode-scan/
 
@@ -34,7 +34,7 @@
 - 読み取り成功・閉じる・画面を離れる操作でカメラを停止
 - 登録後は結果を表示し、画面下の「スキャン」から再開できる
 - 各コードから「機械在庫」「在庫板」の両方へ移動可能
-- 個別削除（✕）／すべてリセット
+- 個別削除（✕）／すべてリセット。写真解析中のリセットや画面離脱は解析を中止し、古い結果で履歴を復活させない
 - 「すべてコピー」で全バーコードを1行1コードの形式でコピー（事務所へ送る用）
 - 履歴は端末内に保存（閉じても更新しても残る）
 - 社員ログイン中は現在価格（価格の種類も表示）・非公開価格・一時価格・価格メモ・メモを各履歴に常時表示。未ログイン時は社員ログイン案内に切り替え
@@ -77,5 +77,5 @@
 Node.js 18以降で `node --test tests/live-scan.test.cjs` を実行する。
 カメラとDOMを模擬し、自動登録、重複防止、詳細開閉の位置保持、メモの省略、認証期限切れ・別タブのログアウト、履歴復元、手入力、APIタイムアウト、古い非同期結果の無視、権限エラー、画面離脱時の停止、写真読み取りを確認する。
 
-GitHub Actions では Chromium と WebKit でも、履歴の下のカードの詳細開閉、画面幅変更時の3行メモ、認証期限切れをテストデータで確認する（実際の社員APIには接続しない）。ローカルで同じ確認を行う場合は `npm install --no-save --package-lock=false playwright@1.62.1`、`npx playwright install --with-deps chromium webkit`、`node --test tests/browser-layout.test.cjs` を実行する。
+GitHub Actions では Chromium と WebKit でも、履歴の下のカードの詳細開閉、画面幅変更時の3行メモ、認証期限切れ、画面復帰時の認証同期、読み取りエンジン初期化失敗をテストデータで確認する（実際の社員APIには接続しない）。ローカルで同じ確認を行う場合は `npm install --no-save --package-lock=false playwright@1.62.1`、`npx playwright install --with-deps chromium webkit`、`node --test tests/browser-layout.test.cjs` を実行する。
 端末ごとのピント・解像度・読み取り速度と画面表示は、iPhoneなどの実機でも確認する。
