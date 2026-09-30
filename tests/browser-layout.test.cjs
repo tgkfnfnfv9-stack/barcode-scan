@@ -5,16 +5,17 @@ const path=require('node:path');
 const http=require('node:http');
 const {chromium,webkit}=require('playwright');
 const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
+const broken=html.replace(/(<script[^>]*id="zxwasm"[^>]*>)[\s\S]*?(<\/script>)/,'$1AAECAw==$2');
 let server,url;
 before(async()=>{
-  server=http.createServer((req,res)=>{res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);});
+  server=http.createServer((req,res)=>{res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(req.url.includes('bad-wasm')?broken:html);});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   url=`http://127.0.0.1:${server.address().port}/`;
 });
 after(async()=>{await new Promise(resolve=>server.close(resolve));});
 const memo='引き合い情報です。動作確認済みです。仕様書があります。\n'.repeat(12);
 const stock={name:'テスト機械',model_type:'V33i',current_price:16500000,internal_price:18500000,external_price:0,price_memo:memo,memo};
-async function fixture(browser,{count=12,expiry=60000}={}){
+async function fixture(browser,{count=12,expiry=60000,badWasm=false}={}){
   const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,deviceScaleFactor:1});
   await context.addInitScript(({count,expiry,stock})=>{
     localStorage.setItem('kkmt_barcode_auth',JSON.stringify({token:'test-only',expires_at:new Date(Date.now()+expiry).toISOString()}));
@@ -24,8 +25,9 @@ async function fixture(browser,{count=12,expiry=60000}={}){
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   // 社員APIや認証サイトへは接続せず、テストデータだけを返す。
   await page.route('https://www.kkmt.co.jp/**',route=>route.fulfill({status:200,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify(stock)}));
-  await page.goto(url);
-  await page.waitForFunction(()=>document.querySelector('#scanButtonLabel').textContent==='スキャン');
+  await page.goto(url+(badWasm?'bad-wasm/':''));
+  if(badWasm)await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('初期化に失敗'));
+  else await page.waitForFunction(()=>document.querySelector('#scanButtonLabel').textContent==='スキャン');
   await page.waitForFunction(()=>!document.querySelector('.stock-state'));
   return {context,page,errors};
 }
@@ -74,4 +76,32 @@ for(const [name,type] of Object.entries({chromium,webkit})){
       assert.deepEqual(errors,[]);await context.close();
     }finally{await browser.close();}
   });
+  test(`${name}: resumed tab preserves newer shared login and masks missed logout`,async()=>{
+    const browser=await type.launch({headless:true});
+    try{
+      const {context,page,errors}=await fixture(browser,{count:1});
+      await page.evaluate(()=>{
+        localStorage.setItem('kkmt_barcode_auth',JSON.stringify({token:'newer-test-only',expires_at:new Date(Date.now()+120000).toISOString()}));
+        window.dispatchEvent(new Event('pageshow'));
+      });
+      assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('kkmt_barcode_auth')).token),'newer-test-only');
+      assert.equal(await page.locator('.staff-prices').count(),1);
+      await page.evaluate(()=>{localStorage.removeItem('kkmt_barcode_auth');window.dispatchEvent(new Event('pageshow'));});
+      assert.equal(await page.locator('.staff-prices,.price-line').count(),0);
+      assert.equal(await page.locator('.staff-login').count(),1);
+      assert.deepEqual(errors,[]);await context.close();
+    }finally{await browser.close();}
+  });
+  test(`${name}: corrupt WASM exposes failure and keeps manual registration available`,async()=>{
+    const browser=await type.launch({headless:true});
+    try{
+      const {context,page,errors}=await fixture(browser,{count:0,badWasm:true});
+      assert.equal(await page.locator('#capBtn').isDisabled(),true);assert.equal(await page.locator('#albumBtn').isDisabled(),true);
+      await page.locator('#manualInput').fill('p009000');await page.locator('#manualAddBtn').click();
+      await page.waitForFunction(()=>document.querySelector('.price-line'));
+      assert.match(await page.locator('#histList').innerText(),/P009000.*現在価格.*16,500,000/s);
+      assert.deepEqual(errors,[]);await context.close();
+    }finally{await browser.close();}
+  });
+
 }

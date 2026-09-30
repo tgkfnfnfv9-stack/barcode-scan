@@ -79,6 +79,7 @@
     background:#fff; color:var(--ink2); font-family:var(--sans); font-weight:700; font-size:14px; padding:13px;
     display:flex; align-items:center; justify-content:center; gap:8px;}
   .ghost:active{background:var(--line2);}
+  .ghost:disabled{opacity:.55;cursor:wait;}
   .ghost svg{width:18px; height:18px; opacity:.75;}
 
   .histhead{display:flex; align-items:center; justify-content:space-between; margin:22px 4px 10px;}
@@ -285,6 +286,8 @@ let readBarcodes=null;
 let authRestartNeeded=false;
 let latestCode='';
 let fileScanBusy=false;
+let fileScanSession=null;
+let noticeCode='';
 let decoderQueue=Promise.resolve();
 const scanner=el('scanner'), cameraVideo=el('cameraVideo'), scannerMessage=el('scannerMessage');
 let cameraSession=null;
@@ -297,9 +300,15 @@ function decodeBarcodes(input,options){
 }
 function updateScanButton(){
   el('capBtn').disabled=!readBarcodes||fileScanBusy;
+  el('albumBtn').disabled=!readBarcodes||fileScanBusy;
   el('scanButtonLabel').textContent=!readBarcodes?'準備中…':fileScanBusy?'写真を解析中…':'スキャン';
 }
+function cancelFileScan(announce=false){
+  const pending=!!fileScanSession;fileScanSession=null;fileScanBusy=false;updateScanButton();
+  if(pending&&announce)setStatus('写真解析を中止しました','ready');
+}
 function showScanNotice(message,isError=false){
+  noticeCode='';
   const notice=el('scanNotice');
   notice.textContent=message;
   notice.classList.toggle('err',isError);
@@ -345,18 +354,41 @@ function saveHistory(){
 }
 let history=loadHistory();   // 最新が先頭
 
+let authStorageFallback=null;
 function loadAuth(){
   try{ const v=localStorage.getItem(AUTH_STORE_KEY); const a=v?JSON.parse(v):null; return a&&typeof a==='object'?a:null; }catch(e){ return null; }
 }
+function syncAuth(){
+  // 復帰時や他タブのログイン変更を、休止前のメモリ状態で上書きしない。
+  let value;
+  try{value=localStorage.getItem(AUTH_STORE_KEY);}catch(e){return;}
+  // 保存容量不足では新しい認証をメモリで維持し、別タブが保存値を変えたら同期する。
+  if(authStorageFallback?.readable && value===authStorageFallback.value)return;
+  if(authStorageFallback && !authStorageFallback.readable && value===null){saveAuth();return;}
+  authStorageFallback=null;
+  try{authSession=value?JSON.parse(value):null;}catch(e){authSession=null;}
+}
+function invalidateAuth(token){
+  syncAuth();
+  if(typeof authSession?.token==='string' && authSession.token!==token)return false;
+  authSession=null;saveAuth();return true;
+}
 function saveAuth(){
-  try{ authSession?localStorage.setItem(AUTH_STORE_KEY,JSON.stringify(authSession)):localStorage.removeItem(AUTH_STORE_KEY); }catch(e){}
+  let previous,readable=false;
+  try{previous=localStorage.getItem(AUTH_STORE_KEY);readable=true;}catch(e){}
+  try{
+    authSession?localStorage.setItem(AUTH_STORE_KEY,JSON.stringify(authSession)):localStorage.removeItem(AUTH_STORE_KEY);
+    authStorageFallback=null;
+  }catch(e){authStorageFallback={value:previous,readable};}
 }
 let authSession=loadAuth();
 
 function activeAuthToken(){
-  if(!authSession || typeof authSession.token!=='string' || !authSession.token || typeof authSession.expires_at!=='string'){ authSession=null; saveAuth(); return ''; }
+  syncAuth();
+  if(!authSession)return '';
+  if(typeof authSession.token!=='string' || !authSession.token || typeof authSession.expires_at!=='string'){return invalidateAuth(authSession.token)?'':activeAuthToken();}
   const expiresAt=Date.parse(authSession.expires_at);
-  if(!Number.isFinite(expiresAt) || expiresAt<=Date.now()){ authSession=null; saveAuth(); return ''; }
+  if(!Number.isFinite(expiresAt) || expiresAt<=Date.now()){return invalidateAuth(authSession.token)?'':activeAuthToken();}
   return authSession.token;
 }
 function clearAuthAttempt(){
@@ -483,7 +515,11 @@ function render(){
     const fmt=document.createElement('span'); fmt.className='fmt'; fmt.textContent=item.fmt||'';
     const del=document.createElement('button'); del.className='del'; del.innerHTML=svgX();
     del.setAttribute('aria-label','削除');
-    del.onclick=()=>{ history=history.filter(x=>x!==item); saveHistory(); render(); };
+    del.onclick=()=>{
+      history=history.filter(x=>x!==item);
+      if(noticeCode===item.code){el('scanNotice').hidden=true;noticeCode='';}
+      saveHistory();render();
+    };
     const cp=document.createElement('button'); cp.className='copy'; cp.innerHTML=svgCopy();
     cp.setAttribute('aria-label','この番号をコピー');
     cp.onclick=()=>{ copyText(item.code).then(()=>{
@@ -568,6 +604,7 @@ function render(){
       const photoURL=stockPhotoURL(item.stock.head_picture_url);
       if(photoURL){
         const photo=document.createElement('img'); photo.className='stock-photo'; photo.src=photoURL; photo.alt='機械画像'; photo.loading='lazy';
+        photo.onerror=()=>{const error=document.createElement('div');error.className='stock-state';error.textContent='写真を表示できません';photo.replaceWith(error);};
         details.appendChild(photo);
       }
 
@@ -629,6 +666,7 @@ function addScan(code,fmt){
   render();
   setStatus('読み取り成功：'+code,'ready');
   showScanNotice(previous?'✓ '+code+' は登録済みです。一番上に移動しました':'✓ '+code+' を登録しました');
+  noticeCode=code;
   loadStock(item);
 }
 
@@ -675,7 +713,8 @@ async function fetchStock(code){
     // 古い認証の応答で、新しいログインを消したり古い価格を戻したりしない。
     if(token!==activeAuthToken()){render(); continue;}
     if(response.status===401 && token){
-      authSession=null; saveAuth(); clearAuthAttempt(); savePendingAuthCode(code);
+      if(!invalidateAuth(token)){render();continue;}
+      clearAuthAttempt(); savePendingAuthCode(code);
       render();
       setStatus('社員価格ログインの期限が切れました','err');
       authRestartNeeded=true;
@@ -772,7 +811,7 @@ async function scanCrop(source,crop,highContrast){
   return pickMachineBarcode(results);
 }
 
-async function scanDetailedAreas(file){
+async function scanDetailedAreas(file,session){
   const source=await loadScanImage(file);
   const crops=[
     {x:0,y:.45,width:1,height:.55},
@@ -781,9 +820,12 @@ async function scanDetailedAreas(file){
   ];
   try{
     for(const crop of crops){
+      if(fileScanSession!==session)return null;
       const normal=await scanCrop(source,crop,false);
+      if(fileScanSession!==session)return null;
       if(normal) return normal;
       const enhanced=await scanCrop(source,crop,true);
+      if(fileScanSession!==session)return null;
       if(enhanced) return enhanced;
     }
   }finally{
@@ -905,18 +947,21 @@ async function startScanner(){
 async function handleFile(file){
   if(!file || !readBarcodes || fileScanBusy) return;
   stopScanner(false);
+  const session={};fileScanSession=session;
   fileScanBusy=true; updateScanButton();
   setStatus('解析中…','busy');
   try{
     let result=pickMachineBarcode(await decodeBarcodes(file,READER_OPTS));
+    if(fileScanSession!==session)return;
     if(!result){
       setStatus('細部を再解析中…','busy');
-      result=await scanDetailedAreas(file);
+      result=await scanDetailedAreas(file,session);
     }
+    if(fileScanSession!==session)return;
     if(result) addScan(result.text,result.format);
     else setStatus('読み取れませんでした。バーコードを大きく写して再撮影してください','err');
-  }catch(e){ setStatus('解析に失敗：'+((e&&e.message)||e),'err'); }
-  finally{fileScanBusy=false; updateScanButton();}
+  }catch(e){if(fileScanSession===session)setStatus('解析に失敗：'+((e&&e.message)||e),'err');}
+  finally{if(fileScanSession===session)cancelFileScan();}
 }
 
 el('capBtn').addEventListener('click',startScanner);
@@ -924,8 +969,8 @@ el('closeScanner').addEventListener('click',()=>stopScanner());
 scanner.addEventListener('cancel',event=>{event.preventDefault(); stopScanner();});
 scanner.addEventListener('close',()=>{if(!scanner.open && cameraSession) stopScanner();});
 el('scannerManual').addEventListener('click',()=>{stopScanner(false); el('manualInput').focus();});
-document.addEventListener('visibilitychange',()=>{if(document.hidden) stopScanner(false); else render();});
-window.addEventListener('pagehide',()=>stopScanner(false));
+document.addEventListener('visibilitychange',()=>{if(document.hidden){stopScanner(false);cancelFileScan(true);} else render();});
+window.addEventListener('pagehide',()=>{stopScanner(false);cancelFileScan(true);});
 window.addEventListener('pageshow',()=>render());
 window.addEventListener('storage',event=>{
   if(event.key===AUTH_STORE_KEY || event.key===null){
@@ -937,7 +982,7 @@ window.addEventListener('storage',event=>{
 el('albumBtn').addEventListener('click',()=>el('albumInput').click());
 el('albumInput').addEventListener('change',e=>{const f=e.target.files[0]; e.target.value=''; handleFile(f);});
 
-resetAllBtn.addEventListener('click',()=>{ history=[]; latestCode=''; el('scanNotice').hidden=true; saveHistory(); render(); setStatus('履歴をリセットしました','ready'); });
+resetAllBtn.addEventListener('click',()=>{cancelFileScan();noticeCode=''; history=[]; latestCode=''; el('scanNotice').hidden=true; saveHistory(); render(); setStatus('履歴をリセットしました','ready'); });
 
 /* 直接入力して登録（手入力） */
 const manualInput=el('manualInput'), manualAddBtn=el('manualAddBtn');
@@ -971,12 +1016,13 @@ function copyText(text){
 }
 copyAllBtn.addEventListener('click',()=>{
   if(!history.length) return;
+  const count=history.length;
   const text=history.map(x=>x.code).join('\n');
   copyText(text).then(()=>{
     const label=copyAllBtn.childNodes[copyAllBtn.childNodes.length-1];
     copyAllBtn.classList.add('done');
-    if(label) label.textContent=' コピーしました（'+history.length+'件）';
-    setStatus('コピーしました（'+history.length+'件）','ready');
+    if(label) label.textContent=' コピーしました（'+count+'件）';
+    setStatus('コピーしました（'+count+'件）','ready');
     setTimeout(()=>{ copyAllBtn.classList.remove('done'); if(label) label.textContent=' すべてコピー'; },1600);
   }).catch(()=>{ setStatus('コピーできませんでした。長押しで選択してください','err'); });
 });
